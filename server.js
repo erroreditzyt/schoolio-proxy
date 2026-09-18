@@ -9,12 +9,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: "1mb" }));
+
 app.use(
     express.urlencoded({
         extended: true,
         limit: "1mb"
     })
 );
+
 
 /* =========================================================
    CORS
@@ -46,17 +48,20 @@ app.use((req, res, next) => {
 
 
 /* =========================================================
-   ALLOWED WEBSITES
+   SCHOOLIO ALLOWED WEBSITES
 ========================================================= */
 
 const ALLOWED_HOSTS = [
 
-    // GitHub / coding
+    /* GitHub */
     "github.com",
     "api.github.com",
     "docs.github.com",
     "githubusercontent.com",
     "raw.githubusercontent.com",
+    "githubassets.com",
+
+    /* Coding */
     "stackoverflow.com",
     "stackexchange.com",
     "codepen.io",
@@ -69,20 +74,21 @@ const ALLOWED_HOSTS = [
     "java.com",
     "oracle.com",
 
-    // Web development
+    /* Web Development */
     "developer.mozilla.org",
     "mozilla.org",
+    "mozilla.net",
     "w3.org",
     "w3schools.com",
 
-    // Hosting
+    /* Hosting */
     "render.com",
     "vercel.com",
     "netlify.com",
     "railway.app",
     "cloudflare.com",
 
-    // Reference
+    /* Wikipedia / Reference */
     "wikipedia.org",
     "wikimedia.org",
     "wiktionary.org",
@@ -93,29 +99,33 @@ const ALLOWED_HOSTS = [
     "archive.org",
     "gutenberg.org",
 
-    // Microsoft
+    /* Microsoft */
     "microsoft.com",
     "learn.microsoft.com",
     "support.microsoft.com",
     "office.com",
 
-    // Google public pages
+    /* Google Public Services */
     "google.com",
     "googleapis.com",
     "gstatic.com",
     "googleusercontent.com",
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
     "scholar.google.com",
     "books.google.com",
     "translate.google.com",
 
-    // Education
+    /* Education */
     "khanacademy.org",
+    "kastatic.org",
+    "kasandbox.org",
     "quizlet.com",
     "desmos.com",
     "geogebra.org",
     "wolframalpha.com",
 
-    // Science
+    /* Science */
     "nasa.gov",
     "noaa.gov",
     "usgs.gov",
@@ -123,7 +133,7 @@ const ALLOWED_HOSTS = [
     "cdc.gov",
     "who.int",
 
-    // Government / finance
+    /* Government */
     "weather.gov",
     "census.gov",
     "data.gov",
@@ -135,25 +145,27 @@ const ALLOWED_HOSTS = [
     "bea.gov",
     "bls.gov",
     "finra.org",
+
+    /* Finance */
     "investopedia.com",
     "nasdaq.com",
     "nyse.com",
     "finance.yahoo.com",
 
-    // News
+    /* News */
     "reuters.com",
     "apnews.com",
     "bbc.com",
     "npr.org",
 
-    // General
+    /* General */
     "imdb.com",
     "rottentomatoes.com",
     "goodreads.com",
     "medium.com",
     "substack.com",
 
-    // Productivity
+    /* Productivity */
     "canva.com",
     "figma.com",
     "notion.so"
@@ -161,13 +173,13 @@ const ALLOWED_HOSTS = [
 
 
 /* =========================================================
-   DOMAIN CHECK
+   CHECK ALLOWED HOST
 ========================================================= */
 
 function isAllowedHost(hostname) {
 
     hostname =
-        hostname
+        String(hostname)
             .toLowerCase()
             .replace(/\.$/, "");
 
@@ -188,62 +200,84 @@ function isAllowedHost(hostname) {
 
 
 /* =========================================================
-   PRIVATE IP BLOCK
+   PRIVATE IP CHECK
 ========================================================= */
+
+function isPrivateIPv4(ip) {
+
+    const pieces =
+        ip
+            .split(".")
+            .map(Number);
+
+    if (pieces.length !== 4) {
+        return true;
+    }
+
+    const a = pieces[0];
+    const b = pieces[1];
+
+    return (
+
+        a === 0 ||
+
+        a === 10 ||
+
+        a === 127 ||
+
+        (
+            a === 169 &&
+            b === 254
+        ) ||
+
+        (
+            a === 172 &&
+            b >= 16 &&
+            b <= 31
+        ) ||
+
+        (
+            a === 192 &&
+            b === 168
+        ) ||
+
+        (
+            a === 100 &&
+            b >= 64 &&
+            b <= 127
+        )
+    );
+}
+
+
+function isPrivateIPv6(ip) {
+
+    const value =
+        ip.toLowerCase();
+
+    return (
+
+        value === "::" ||
+
+        value === "::1" ||
+
+        value.startsWith("fc") ||
+
+        value.startsWith("fd") ||
+
+        value.startsWith("fe80:")
+    );
+}
+
 
 function isPrivateIP(ip) {
 
     if (net.isIPv4(ip)) {
-
-        const p =
-            ip
-                .split(".")
-                .map(Number);
-
-        const a = p[0];
-        const b = p[1];
-
-        return (
-            a === 0 ||
-            a === 10 ||
-            a === 127 ||
-
-            (
-                a === 169 &&
-                b === 254
-            ) ||
-
-            (
-                a === 172 &&
-                b >= 16 &&
-                b <= 31
-            ) ||
-
-            (
-                a === 192 &&
-                b === 168
-            ) ||
-
-            (
-                a === 100 &&
-                b >= 64 &&
-                b <= 127
-            )
-        );
+        return isPrivateIPv4(ip);
     }
 
     if (net.isIPv6(ip)) {
-
-        const value =
-            ip.toLowerCase();
-
-        return (
-            value === "::1" ||
-            value === "::" ||
-            value.startsWith("fc") ||
-            value.startsWith("fd") ||
-            value.startsWith("fe80:")
-        );
+        return isPrivateIPv6(ip);
     }
 
     return true;
@@ -251,7 +285,7 @@ function isPrivateIP(ip) {
 
 
 /* =========================================================
-   URL VALIDATION
+   VALIDATE TARGET URL
 ========================================================= */
 
 async function validateUrl(input) {
@@ -260,14 +294,16 @@ async function validateUrl(input) {
 
     try {
 
-        url = new URL(input);
+        url =
+            new URL(input);
 
     } catch {
 
         throw new Error(
-            "Invalid URL"
+            "Invalid website address."
         );
     }
+
 
     if (
         url.protocol !== "https:" &&
@@ -275,9 +311,10 @@ async function validateUrl(input) {
     ) {
 
         throw new Error(
-            "Only HTTP and HTTPS URLs are supported"
+            "Only HTTP and HTTPS websites are supported."
         );
     }
+
 
     if (
         !isAllowedHost(
@@ -290,13 +327,34 @@ async function validateUrl(input) {
         );
     }
 
-    const addresses =
-        await dns.lookup(
-            url.hostname,
-            {
-                all: true
-            }
+
+    let addresses;
+
+    try {
+
+        addresses =
+            await dns.lookup(
+                url.hostname,
+                {
+                    all: true
+                }
+            );
+
+    } catch {
+
+        throw new Error(
+            "Website hostname could not be resolved."
         );
+    }
+
+
+    if (!addresses.length) {
+
+        throw new Error(
+            "Website hostname could not be resolved."
+        );
+    }
+
 
     for (
         const result
@@ -310,41 +368,46 @@ async function validateUrl(input) {
         ) {
 
             throw new Error(
-                "Private/internal addresses are blocked."
+                "Private or internal network addresses are blocked."
             );
         }
     }
+
 
     return url;
 }
 
 
 /* =========================================================
-   FETCH WITH REDIRECT CHECKING
+   SAFE FETCH
 ========================================================= */
 
 async function safeFetch(
-    target,
-    redirectCount = 0
+    input,
+    redirects = 0
 ) {
 
-    if (redirectCount > 5) {
+    if (redirects > 5) {
 
         throw new Error(
             "Too many redirects."
         );
     }
 
+
     const url =
         await validateUrl(
-            target
+            input
         );
+
 
     const response =
         await fetch(
             url.href,
             {
-                method: "GET",
+
+                method:
+                    "GET",
 
                 redirect:
                     "manual",
@@ -352,16 +415,17 @@ async function safeFetch(
                 headers: {
 
                     "User-Agent":
-                        "Mozilla/5.0 Schoolio/2.0",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Schoolio/2.0",
 
                     "Accept":
-                        "text/html,text/css,image/*,application/json,text/plain,*/*",
+                        "text/html,text/css,image/avif,image/webp,image/png,image/jpeg,application/json,text/plain,*/*",
 
                     "Accept-Language":
                         "en-US,en;q=0.9"
                 }
             }
         );
+
 
     if (
         response.status >= 300 &&
@@ -373,27 +437,33 @@ async function safeFetch(
                 "location"
             );
 
+
         if (!location) {
 
             throw new Error(
-                "Redirect has no destination."
+                "Redirect destination was missing."
             );
         }
 
-        const next =
+
+        const nextUrl =
             new URL(
                 location,
                 url
             );
 
+
         return safeFetch(
-            next.href,
-            redirectCount + 1
+            nextUrl.href,
+            redirects + 1
         );
     }
 
+
     return {
+
         response,
+
         finalUrl:
             url.href
     };
@@ -401,14 +471,46 @@ async function safeFetch(
 
 
 /* =========================================================
-   PROXY URL CREATOR
+   CREATE SCHOOLIO PROXY URL
 ========================================================= */
 
-function proxyUrl(url) {
+function createProxyUrl(url) {
 
     return (
         "/proxy?url=" +
         encodeURIComponent(url)
+    );
+}
+
+
+/* =========================================================
+   SHOULD SKIP URL
+========================================================= */
+
+function shouldSkipUrl(value) {
+
+    if (!value) {
+        return true;
+    }
+
+    const lower =
+        value
+            .trim()
+            .toLowerCase();
+
+    return (
+
+        lower.startsWith("#") ||
+
+        lower.startsWith("data:") ||
+
+        lower.startsWith("javascript:") ||
+
+        lower.startsWith("mailto:") ||
+
+        lower.startsWith("tel:") ||
+
+        lower.startsWith("blob:")
     );
 }
 
@@ -427,119 +529,137 @@ function rewriteHTML(
             html
         );
 
-    const rewrite =
-        (
-            selector,
-            attribute
-        ) => {
 
-            $(
-                selector
-            )
+    function rewriteAttribute(
+        selector,
+        attribute
+    ) {
+
+        $(selector)
             .each(
-                (_, element) => {
+                (index, element) => {
 
-                    const oldValue =
+                    const original =
                         $(element)
-                        .attr(
-                            attribute
-                        );
+                            .attr(
+                                attribute
+                            );
+
 
                     if (
-                        !oldValue ||
-                        oldValue.startsWith("#") ||
-                        oldValue.startsWith("data:") ||
-                        oldValue.startsWith("javascript:") ||
-                        oldValue.startsWith("mailto:") ||
-                        oldValue.startsWith("tel:")
+                        shouldSkipUrl(
+                            original
+                        )
                     ) {
 
                         return;
                     }
 
+
                     try {
 
                         const absolute =
                             new URL(
-                                oldValue,
+                                original,
                                 pageUrl
                             );
 
+
+                        if (
+                            absolute.protocol !== "http:" &&
+                            absolute.protocol !== "https:"
+                        ) {
+
+                            return;
+                        }
+
+
                         $(element)
-                        .attr(
-                            attribute,
-                            proxyUrl(
-                                absolute.href
-                            )
-                        );
+                            .attr(
+                                attribute,
+                                createProxyUrl(
+                                    absolute.href
+                                )
+                            );
 
-                    } catch {}
+                    } catch {
 
+                        // Ignore malformed resource URL
+
+                    }
                 }
             );
-        };
+    }
 
-    rewrite(
+
+    rewriteAttribute(
         "a[href]",
         "href"
     );
 
-    rewrite(
+    rewriteAttribute(
         "img[src]",
         "src"
     );
 
-    rewrite(
+    rewriteAttribute(
         "script[src]",
         "src"
     );
 
-    rewrite(
+    rewriteAttribute(
         "link[href]",
         "href"
     );
 
-    rewrite(
+    rewriteAttribute(
         "iframe[src]",
         "src"
     );
 
-    rewrite(
+    rewriteAttribute(
         "source[src]",
         "src"
     );
 
-    rewrite(
+    rewriteAttribute(
         "video[src]",
         "src"
     );
 
-    rewrite(
+    rewriteAttribute(
         "audio[src]",
         "src"
     );
 
-    rewrite(
-        "form[action]",
-        "action"
-    );
 
-    $("meta[http-equiv='refresh']")
+    /* Remove automatic page redirects */
+
+    $(
+        'meta[http-equiv="refresh"]'
+    )
     .remove();
 
+
+    /*
+       Add base information for relative URLs
+       used by some page scripts.
+    */
+
     $("head")
-    .prepend(`
-        <script>
-        window.__SCHOOLIO_PROXY__ = true;
-        </script>
-    `);
+        .prepend(`
+            <meta
+            name="schoolio-proxy"
+            content="enabled">
+        `);
+
 
     return $.html();
 }
 
 
 /* =========================================================
-   REWRITE CSS URL(...)
+   REWRITE CSS url(...)
 ========================================================= */
 
 function rewriteCSS(
@@ -548,22 +668,24 @@ function rewriteCSS(
 ) {
 
     return css.replace(
+
         /url\(\s*(['"]?)(.*?)\1\s*\)/gi,
 
         (
-            match,
+            whole,
             quote,
             value
         ) => {
 
             if (
-                !value ||
-                value.startsWith("data:") ||
-                value.startsWith("#")
+                shouldSkipUrl(
+                    value
+                )
             ) {
 
-                return match;
+                return whole;
             }
+
 
             try {
 
@@ -573,15 +695,27 @@ function rewriteCSS(
                         pageUrl
                     );
 
+
+                if (
+                    absolute.protocol !== "http:" &&
+                    absolute.protocol !== "https:"
+                ) {
+
+                    return whole;
+                }
+
+
                 return (
-                    `url("${proxyUrl(
+                    'url("' +
+                    createProxyUrl(
                         absolute.href
-                    )}")`
+                    ) +
+                    '")'
                 );
 
             } catch {
 
-                return match;
+                return whole;
             }
         }
     );
@@ -589,7 +723,7 @@ function rewriteCSS(
 
 
 /* =========================================================
-   HOME
+   SERVER HOME
 ========================================================= */
 
 app.get(
@@ -599,11 +733,15 @@ app.get(
         res.send(`
 <!DOCTYPE html>
 
-<html>
+<html lang="en">
 
 <head>
 
 <meta charset="UTF-8">
+
+<meta
+name="viewport"
+content="width=device-width, initial-scale=1">
 
 <title>
 Schoolio Proxy
@@ -612,17 +750,22 @@ Schoolio Proxy
 <style>
 
 body {
-    margin: 0;
-    padding: 50px;
+
+    margin:
+        0;
+
+    padding:
+        40px;
 
     font-family:
         Arial,
         sans-serif;
 
-    color: #eee;
+    color:
+        #eeeeee;
 
     background:
-        #070707;
+        #050505;
 }
 
 .card {
@@ -631,7 +774,7 @@ body {
         650px;
 
     margin:
-        auto;
+        40px auto;
 
     padding:
         30px;
@@ -643,17 +786,22 @@ body {
         #0d0d0d;
 
     border:
-        1px solid #222;
+        1px solid #222222;
 }
 
 h1 {
+
+    margin-top:
+        0;
+
     color:
         #ff263d;
 }
 
 .online {
+
     color:
-        #65dc7c;
+        #62db78;
 }
 
 code {
@@ -670,11 +818,14 @@ code {
     border-radius:
         8px;
 
+    color:
+        #aaaaaa;
+
     background:
         #050505;
 
-    color:
-        #aaa;
+    overflow-wrap:
+        anywhere;
 }
 
 </style>
@@ -697,6 +848,18 @@ SCHOOLIO PROXY
 Schoolio backend is running.
 </p>
 
+<p>
+Test endpoint:
+</p>
+
+<code>
+/api/test
+</code>
+
+<p>
+Proxy example:
+</p>
+
 <code>
 /proxy?url=https://en.wikipedia.org
 </code>
@@ -712,7 +875,7 @@ Schoolio backend is running.
 
 
 /* =========================================================
-   TEST
+   TEST API
 ========================================================= */
 
 app.get(
@@ -735,7 +898,72 @@ app.get(
 
 
 /* =========================================================
-   ALLOWED LIST
+   CHECK WHETHER WEBSITE IS ALLOWED
+========================================================= */
+
+app.get(
+    "/api/check",
+    async (req, res) => {
+
+        const target =
+            req.query.url;
+
+
+        if (!target) {
+
+            return res
+                .status(400)
+                .json({
+
+                    allowed:
+                        false,
+
+                    error:
+                        "Missing url parameter."
+                });
+        }
+
+
+        try {
+
+            const url =
+                await validateUrl(
+                    target
+                );
+
+
+            return res.json({
+
+                allowed:
+                    true,
+
+                url:
+                    url.href,
+
+                hostname:
+                    url.hostname
+            });
+
+
+        } catch(error) {
+
+            return res
+                .status(403)
+                .json({
+
+                    allowed:
+                        false,
+
+                    error:
+                        error.message
+                });
+        }
+    }
+);
+
+
+/* =========================================================
+   SHOW ALLOWED SITES
 ========================================================= */
 
 app.get(
@@ -766,17 +994,23 @@ app.get(
 
             const response =
                 await fetch(
+
                     "https://api.github.com/repos/microsoft/vscode",
+
                     {
+
                         headers: {
+
                             "User-Agent":
                                 "Schoolio"
                         }
                     }
                 );
 
+
             const data =
                 await response.json();
+
 
             res.json({
 
@@ -790,6 +1024,7 @@ app.get(
                     data.description
             });
 
+
         } catch(error) {
 
             res
@@ -797,6 +1032,9 @@ app.get(
                 .json({
 
                     error:
+                        "GitHub request failed.",
+
+                    details:
                         error.message
                 });
         }
@@ -805,7 +1043,7 @@ app.get(
 
 
 /* =========================================================
-   PROXY
+   WEBSITE PROXY
 ========================================================= */
 
 app.get(
@@ -815,6 +1053,7 @@ app.get(
         const target =
             req.query.url;
 
+
         if (!target) {
 
             return res
@@ -823,6 +1062,7 @@ app.get(
                     "Missing url parameter."
                 );
         }
+
 
         try {
 
@@ -834,35 +1074,45 @@ app.get(
                     target
                 );
 
+
             const contentType =
                 response.headers.get(
                     "content-type"
                 ) ||
                 "application/octet-stream";
 
+
+            const declaredLength =
+                Number(
+                    response.headers.get(
+                        "content-length"
+                    ) ||
+                    0
+                );
+
+
             const maxSize =
                 10 *
                 1024 *
                 1024;
 
-            const declaredSize =
-                Number(
-                    response.headers.get(
-                        "content-length"
-                    ) || 0
-                );
 
             if (
-                declaredSize >
+                declaredLength >
                 maxSize
             ) {
 
                 return res
                     .status(413)
                     .send(
-                        "Response too large."
+                        "Website response was too large."
                     );
             }
+
+
+            /* ===============================
+               HTML
+            =============================== */
 
             if (
                 contentType.includes(
@@ -873,25 +1123,56 @@ app.get(
                 let html =
                     await response.text();
 
+
+                if (
+                    Buffer.byteLength(
+                        html,
+                        "utf8"
+                    ) >
+                    maxSize
+                ) {
+
+                    return res
+                        .status(413)
+                        .send(
+                            "Website response was too large."
+                        );
+                }
+
+
                 html =
                     rewriteHTML(
                         html,
                         finalUrl
                     );
 
+
                 res.status(
                     response.status
                 );
+
 
                 res.setHeader(
                     "Content-Type",
                     "text/html; charset=utf-8"
                 );
 
+
+                res.setHeader(
+                    "X-Schoolio-Final-URL",
+                    finalUrl
+                );
+
+
                 return res.send(
                     html
                 );
             }
+
+
+            /* ===============================
+               CSS
+            =============================== */
 
             if (
                 contentType.includes(
@@ -902,28 +1183,38 @@ app.get(
                 let css =
                     await response.text();
 
+
                 css =
                     rewriteCSS(
                         css,
                         finalUrl
                     );
 
+
                 res.status(
                     response.status
                 );
+
 
                 res.setHeader(
                     "Content-Type",
                     "text/css; charset=utf-8"
                 );
 
+
                 return res.send(
                     css
                 );
             }
 
+
+            /* ===============================
+               OTHER FILE TYPES
+            =============================== */
+
             const buffer =
                 await response.buffer();
+
 
             if (
                 buffer.length >
@@ -933,22 +1224,32 @@ app.get(
                 return res
                     .status(413)
                     .send(
-                        "Response too large."
+                        "Website response was too large."
                     );
             }
+
 
             res.status(
                 response.status
             );
+
 
             res.setHeader(
                 "Content-Type",
                 contentType
             );
 
+
+            res.setHeader(
+                "X-Schoolio-Final-URL",
+                finalUrl
+            );
+
+
             return res.send(
                 buffer
             );
+
 
         } catch(error) {
 
@@ -957,28 +1258,56 @@ app.get(
                 .send(`
 <!DOCTYPE html>
 
-<html>
+<html lang="en">
 
 <head>
+
+<meta charset="UTF-8">
 
 <style>
 
 body {
 
-    background:
-        #070707;
-
-    color:
-        #eee;
-
-    font-family:
-        Arial;
+    margin:
+        0;
 
     padding:
         40px;
+
+    font-family:
+        Arial,
+        sans-serif;
+
+    color:
+        #eeeeee;
+
+    background:
+        #070707;
+}
+
+.card {
+
+    max-width:
+        600px;
+
+    margin:
+        auto;
+
+    padding:
+        25px;
+
+    border:
+        1px solid #222222;
+
+    border-radius:
+        14px;
+
+    background:
+        #0d0d0d;
 }
 
 h2 {
+
     color:
         #ff263d;
 }
@@ -989,6 +1318,8 @@ h2 {
 
 <body>
 
+<div class="card">
+
 <h2>
 Schoolio Proxy
 </h2>
@@ -996,6 +1327,8 @@ Schoolio Proxy
 <p>
 ${escapeHtml(error.message)}
 </p>
+
+</div>
 
 </body>
 
@@ -1007,22 +1340,60 @@ ${escapeHtml(error.message)}
 
 
 /* =========================================================
-   HTML ESCAPE
+   ESCAPE ERROR TEXT
 ========================================================= */
 
 function escapeHtml(value) {
 
     return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+
+        .replace(
+            /&/g,
+            "&amp;"
+        )
+
+        .replace(
+            /</g,
+            "&lt;"
+        )
+
+        .replace(
+            />/g,
+            "&gt;"
+        )
+
+        .replace(
+            /"/g,
+            "&quot;"
+        )
+
+        .replace(
+            /'/g,
+            "&#039;"
+        );
 }
 
 
 /* =========================================================
-   START
+   404
+========================================================= */
+
+app.use(
+    (req, res) => {
+
+        res
+            .status(404)
+            .json({
+
+                error:
+                    "Schoolio route not found."
+            });
+    }
+);
+
+
+/* =========================================================
+   START SERVER
 ========================================================= */
 
 app.listen(
@@ -1036,7 +1407,7 @@ app.listen(
         );
 
         console.log(
-            "Allowed websites: " +
+            "Allowed domains: " +
             ALLOWED_HOSTS.length
         );
     }
