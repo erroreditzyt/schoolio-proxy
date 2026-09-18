@@ -5,8 +5,13 @@ const dns = require("dns").promises;
 const net = require("net");
 
 const app = express();
-
 const PORT = process.env.PORT || 3000;
+
+/* =========================================================
+   SCHOOLIO PROXY SERVER
+========================================================= */
+
+app.disable("x-powered-by");
 
 app.use(express.json({ limit: "1mb" }));
 
@@ -48,12 +53,39 @@ app.use((req, res, next) => {
 
 
 /* =========================================================
-   SCHOOLIO ALLOWED WEBSITES
+   ALLOWED WEBSITES
+
+   Add new approved domains here.
+
+   Example:
+
+   "example.com",
+
+   Adding example.com automatically allows:
+
+   www.example.com
+   docs.example.com
+   cdn.example.com
 ========================================================= */
 
-const ALLOWED_HOSTS = [
+const DEFAULT_ALLOWED_HOSTS = [
 
-    /* GitHub */
+    /* =====================
+       SCHOOLIO / TEST
+    ===================== */
+
+    "example.com",
+
+    /* =====================
+       PETEZAH
+    ===================== */
+
+    "petezahgames.com",
+
+    /* =====================
+       GITHUB
+    ===================== */
+
     "github.com",
     "api.github.com",
     "docs.github.com",
@@ -61,7 +93,10 @@ const ALLOWED_HOSTS = [
     "raw.githubusercontent.com",
     "githubassets.com",
 
-    /* Coding */
+    /* =====================
+       CODING
+    ===================== */
+
     "stackoverflow.com",
     "stackexchange.com",
     "codepen.io",
@@ -74,21 +109,33 @@ const ALLOWED_HOSTS = [
     "java.com",
     "oracle.com",
 
-    /* Web Development */
+    /* =====================
+       WEB DEVELOPMENT
+    ===================== */
+
     "developer.mozilla.org",
     "mozilla.org",
     "mozilla.net",
     "w3.org",
     "w3schools.com",
 
-    /* Hosting */
+    /* =====================
+       HOSTING / CDN
+    ===================== */
+
     "render.com",
     "vercel.com",
     "netlify.com",
     "railway.app",
     "cloudflare.com",
+    "jsdelivr.net",
+    "cdnjs.com",
+    "unpkg.com",
 
-    /* Wikipedia / Reference */
+    /* =====================
+       WIKIPEDIA / REFERENCE
+    ===================== */
+
     "wikipedia.org",
     "wikimedia.org",
     "wiktionary.org",
@@ -99,13 +146,19 @@ const ALLOWED_HOSTS = [
     "archive.org",
     "gutenberg.org",
 
-    /* Microsoft */
+    /* =====================
+       MICROSOFT
+    ===================== */
+
     "microsoft.com",
     "learn.microsoft.com",
     "support.microsoft.com",
     "office.com",
 
-    /* Google Public Services */
+    /* =====================
+       GOOGLE PUBLIC SERVICES
+    ===================== */
+
     "google.com",
     "googleapis.com",
     "gstatic.com",
@@ -116,7 +169,10 @@ const ALLOWED_HOSTS = [
     "books.google.com",
     "translate.google.com",
 
-    /* Education */
+    /* =====================
+       EDUCATION
+    ===================== */
+
     "khanacademy.org",
     "kastatic.org",
     "kasandbox.org",
@@ -125,7 +181,10 @@ const ALLOWED_HOSTS = [
     "geogebra.org",
     "wolframalpha.com",
 
-    /* Science */
+    /* =====================
+       SCIENCE
+    ===================== */
+
     "nasa.gov",
     "noaa.gov",
     "usgs.gov",
@@ -133,7 +192,10 @@ const ALLOWED_HOSTS = [
     "cdc.gov",
     "who.int",
 
-    /* Government */
+    /* =====================
+       GOVERNMENT
+    ===================== */
+
     "weather.gov",
     "census.gov",
     "data.gov",
@@ -146,77 +208,145 @@ const ALLOWED_HOSTS = [
     "bls.gov",
     "finra.org",
 
-    /* Finance */
+    /* =====================
+       FINANCE
+    ===================== */
+
     "investopedia.com",
     "nasdaq.com",
     "nyse.com",
     "finance.yahoo.com",
 
-    /* News */
+    /* =====================
+       NEWS
+    ===================== */
+
     "reuters.com",
     "apnews.com",
     "bbc.com",
     "npr.org",
 
-    /* General */
+    /* =====================
+       GENERAL
+    ===================== */
+
     "imdb.com",
     "rottentomatoes.com",
     "goodreads.com",
     "medium.com",
     "substack.com",
 
-    /* Productivity */
+    /* =====================
+       PRODUCTIVITY
+    ===================== */
+
     "canva.com",
     "figma.com",
-    "notion.so",
-    "petezah.games"
+    "notion.so"
 ];
 
 
 /* =========================================================
-   CHECK ALLOWED HOST
+   OPTIONAL RENDER EXTRA DOMAINS
+
+   You can create a Render environment variable:
+
+   EXTRA_ALLOWED_HOSTS
+
+   Value example:
+
+   site1.com,site2.com,site3.com
+
+   This lets you add approved domains without editing code.
 ========================================================= */
+
+const EXTRA_ALLOWED_HOSTS =
+    String(
+        process.env.EXTRA_ALLOWED_HOSTS || ""
+    )
+    .split(",")
+    .map(
+        domain =>
+            domain
+                .trim()
+                .toLowerCase()
+    )
+    .filter(Boolean);
+
+
+const ALLOWED_HOSTS =
+    Array.from(
+        new Set([
+            ...DEFAULT_ALLOWED_HOSTS,
+            ...EXTRA_ALLOWED_HOSTS
+        ])
+    );
+
+
+/* =========================================================
+   DOMAIN CHECK
+========================================================= */
+
+function cleanHostname(hostname) {
+
+    return String(hostname || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\.$/, "");
+}
+
 
 function isAllowedHost(hostname) {
 
-    hostname =
-        String(hostname)
-            .toLowerCase()
-            .replace(/\.$/, "");
-
-    return ALLOWED_HOSTS.some(domain => {
-
-        domain =
-            domain
-                .toLowerCase()
-                .replace(/\.$/, "");
-
-        return (
-            hostname === domain ||
-            hostname.endsWith("." + domain)
+    const host =
+        cleanHostname(
+            hostname
         );
 
-    });
+    return ALLOWED_HOSTS.some(
+        domain => {
+
+            const allowed =
+                cleanHostname(
+                    domain
+                );
+
+            return (
+                host === allowed ||
+                host.endsWith(
+                    "." + allowed
+                )
+            );
+        }
+    );
 }
 
 
 /* =========================================================
-   PRIVATE IP CHECK
+   PRIVATE NETWORK PROTECTION
 ========================================================= */
 
 function isPrivateIPv4(ip) {
 
-    const pieces =
+    const parts =
         ip
             .split(".")
             .map(Number);
 
-    if (pieces.length !== 4) {
+    if (
+        parts.length !== 4 ||
+        parts.some(
+            value =>
+                !Number.isInteger(value) ||
+                value < 0 ||
+                value > 255
+        )
+    ) {
         return true;
     }
 
-    const a = pieces[0];
-    const b = pieces[1];
+    const a = parts[0];
+    const b = parts[1];
 
     return (
 
@@ -254,7 +384,8 @@ function isPrivateIPv4(ip) {
 function isPrivateIPv6(ip) {
 
     const value =
-        ip.toLowerCase();
+        String(ip)
+            .toLowerCase();
 
     return (
 
@@ -274,11 +405,17 @@ function isPrivateIPv6(ip) {
 function isPrivateIP(ip) {
 
     if (net.isIPv4(ip)) {
-        return isPrivateIPv4(ip);
+
+        return isPrivateIPv4(
+            ip
+        );
     }
 
     if (net.isIPv6(ip)) {
-        return isPrivateIPv6(ip);
+
+        return isPrivateIPv6(
+            ip
+        );
     }
 
     return true;
@@ -286,7 +423,7 @@ function isPrivateIP(ip) {
 
 
 /* =========================================================
-   VALIDATE TARGET URL
+   VALIDATE URL
 ========================================================= */
 
 async function validateUrl(input) {
@@ -296,7 +433,9 @@ async function validateUrl(input) {
     try {
 
         url =
-            new URL(input);
+            new URL(
+                input
+            );
 
     } catch {
 
@@ -307,12 +446,23 @@ async function validateUrl(input) {
 
 
     if (
-        url.protocol !== "https:" &&
-        url.protocol !== "http:"
+        url.protocol !== "http:" &&
+        url.protocol !== "https:"
     ) {
 
         throw new Error(
             "Only HTTP and HTTPS websites are supported."
+        );
+    }
+
+
+    if (
+        url.username ||
+        url.password
+    ) {
+
+        throw new Error(
+            "URLs containing usernames or passwords are not supported."
         );
     }
 
@@ -324,7 +474,7 @@ async function validateUrl(input) {
     ) {
 
         throw new Error(
-            "That website is not in the Schoolio allowlist."
+            `${url.hostname} is not in the Schoolio allowlist.`
         );
     }
 
@@ -344,7 +494,7 @@ async function validateUrl(input) {
     } catch {
 
         throw new Error(
-            "Website hostname could not be resolved."
+            "That website could not be found."
         );
     }
 
@@ -352,7 +502,7 @@ async function validateUrl(input) {
     if (!addresses.length) {
 
         throw new Error(
-            "Website hostname could not be resolved."
+            "That website could not be found."
         );
     }
 
@@ -369,7 +519,7 @@ async function validateUrl(input) {
         ) {
 
             throw new Error(
-                "Private or internal network addresses are blocked."
+                "Private and internal network addresses are blocked."
             );
         }
     }
@@ -380,15 +530,17 @@ async function validateUrl(input) {
 
 
 /* =========================================================
-   SAFE FETCH
+   FETCH WITH REDIRECT VALIDATION
 ========================================================= */
 
 async function safeFetch(
     input,
-    redirects = 0
+    redirectCount = 0
 ) {
 
-    if (redirects > 5) {
+    if (
+        redirectCount > 6
+    ) {
 
         throw new Error(
             "Too many redirects."
@@ -416,10 +568,10 @@ async function safeFetch(
                 headers: {
 
                     "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Schoolio/2.0",
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36",
 
                     "Accept":
-                        "text/html,text/css,image/avif,image/webp,image/png,image/jpeg,application/json,text/plain,*/*",
+                        "text/html,application/xhtml+xml,text/css,application/javascript,application/json,image/avif,image/webp,image/png,image/jpeg,image/svg+xml,*/*",
 
                     "Accept-Language":
                         "en-US,en;q=0.9"
@@ -447,7 +599,7 @@ async function safeFetch(
         }
 
 
-        const nextUrl =
+        const next =
             new URL(
                 location,
                 url
@@ -455,8 +607,8 @@ async function safeFetch(
 
 
         return safeFetch(
-            nextUrl.href,
-            redirects + 1
+            next.href,
+            redirectCount + 1
         );
     }
 
@@ -472,30 +624,33 @@ async function safeFetch(
 
 
 /* =========================================================
-   CREATE SCHOOLIO PROXY URL
+   CREATE PROXY URL
 ========================================================= */
 
 function createProxyUrl(url) {
 
     return (
         "/proxy?url=" +
-        encodeURIComponent(url)
+        encodeURIComponent(
+            url
+        )
     );
 }
 
 
 /* =========================================================
-   SHOULD SKIP URL
+   URL SKIP CHECK
 ========================================================= */
 
 function shouldSkipUrl(value) {
 
     if (!value) {
+
         return true;
     }
 
     const lower =
-        value
+        String(value)
             .trim()
             .toLowerCase();
 
@@ -511,8 +666,242 @@ function shouldSkipUrl(value) {
 
         lower.startsWith("tel:") ||
 
-        lower.startsWith("blob:")
+        lower.startsWith("blob:") ||
+
+        lower.startsWith("about:")
     );
+}
+
+
+/* =========================================================
+   REWRITE ONE HTML ATTRIBUTE
+========================================================= */
+
+function rewriteAttribute(
+    $,
+    selector,
+    attribute,
+    pageUrl
+) {
+
+    $(selector)
+        .each(
+            (index, element) => {
+
+                const original =
+                    $(element)
+                        .attr(
+                            attribute
+                        );
+
+
+                if (
+                    shouldSkipUrl(
+                        original
+                    )
+                ) {
+
+                    return;
+                }
+
+
+                try {
+
+                    const absolute =
+                        new URL(
+                            original,
+                            pageUrl
+                        );
+
+
+                    if (
+                        absolute.protocol !== "http:" &&
+                        absolute.protocol !== "https:"
+                    ) {
+
+                        return;
+                    }
+
+
+                    $(element)
+                        .attr(
+                            attribute,
+                            createProxyUrl(
+                                absolute.href
+                            )
+                        );
+
+                } catch {
+
+                    // Ignore malformed URLs
+
+                }
+            }
+        );
+}
+
+
+/* =========================================================
+   REWRITE SRCSET
+========================================================= */
+
+function rewriteSrcset(
+    $,
+    pageUrl
+) {
+
+    $("[srcset]")
+        .each(
+            (index, element) => {
+
+                const srcset =
+                    $(element)
+                        .attr(
+                            "srcset"
+                        );
+
+
+                if (!srcset) {
+
+                    return;
+                }
+
+
+                const rewritten =
+                    srcset
+                        .split(",")
+                        .map(
+                            item => {
+
+                                const parts =
+                                    item
+                                        .trim()
+                                        .split(/\s+/);
+
+                                const value =
+                                    parts.shift();
+
+                                const descriptor =
+                                    parts.join(" ");
+
+
+                                if (
+                                    shouldSkipUrl(
+                                        value
+                                    )
+                                ) {
+
+                                    return item;
+                                }
+
+
+                                try {
+
+                                    const absolute =
+                                        new URL(
+                                            value,
+                                            pageUrl
+                                        );
+
+
+                                    const proxied =
+                                        createProxyUrl(
+                                            absolute.href
+                                        );
+
+
+                                    return (
+                                        proxied +
+                                        (
+                                            descriptor
+                                            ?
+                                            " " + descriptor
+                                            :
+                                            ""
+                                        )
+                                    );
+
+                                } catch {
+
+                                    return item;
+                                }
+                            }
+                        )
+                        .join(", ");
+
+
+                $(element)
+                    .attr(
+                        "srcset",
+                        rewritten
+                    );
+            }
+        );
+}
+
+
+/* =========================================================
+   REWRITE INLINE CSS URL(...)
+========================================================= */
+
+function rewriteCSS(
+    css,
+    pageUrl
+) {
+
+    return String(css)
+        .replace(
+
+            /url\(\s*(['"]?)(.*?)\1\s*\)/gi,
+
+            (
+                whole,
+                quote,
+                value
+            ) => {
+
+                if (
+                    shouldSkipUrl(
+                        value
+                    )
+                ) {
+
+                    return whole;
+                }
+
+
+                try {
+
+                    const absolute =
+                        new URL(
+                            value,
+                            pageUrl
+                        );
+
+
+                    if (
+                        absolute.protocol !== "http:" &&
+                        absolute.protocol !== "https:"
+                    ) {
+
+                        return whole;
+                    }
+
+
+                    return (
+                        'url("' +
+                        createProxyUrl(
+                            absolute.href
+                        ) +
+                        '")'
+                    );
+
+                } catch {
+
+                    return whole;
+                }
+            }
+        );
 }
 
 
@@ -527,114 +916,158 @@ function rewriteHTML(
 
     const $ =
         cheerio.load(
-            html
+            html,
+            {
+                decodeEntities:
+                    false
+            }
         );
 
 
-    function rewriteAttribute(
-        selector,
-        attribute
-    ) {
-
-        $(selector)
-            .each(
-                (index, element) => {
-
-                    const original =
-                        $(element)
-                            .attr(
-                                attribute
-                            );
-
-
-                    if (
-                        shouldSkipUrl(
-                            original
-                        )
-                    ) {
-
-                        return;
-                    }
-
-
-                    try {
-
-                        const absolute =
-                            new URL(
-                                original,
-                                pageUrl
-                            );
-
-
-                        if (
-                            absolute.protocol !== "http:" &&
-                            absolute.protocol !== "https:"
-                        ) {
-
-                            return;
-                        }
-
-
-                        $(element)
-                            .attr(
-                                attribute,
-                                createProxyUrl(
-                                    absolute.href
-                                )
-                            );
-
-                    } catch {
-
-                        // Ignore malformed resource URL
-
-                    }
-                }
-            );
-    }
-
-
     rewriteAttribute(
+        $,
         "a[href]",
-        "href"
+        "href",
+        pageUrl
     );
 
+
     rewriteAttribute(
+        $,
         "img[src]",
-        "src"
+        "src",
+        pageUrl
     );
 
+
     rewriteAttribute(
+        $,
         "script[src]",
-        "src"
+        "src",
+        pageUrl
     );
 
+
     rewriteAttribute(
+        $,
         "link[href]",
-        "href"
+        "href",
+        pageUrl
     );
 
+
     rewriteAttribute(
+        $,
         "iframe[src]",
-        "src"
+        "src",
+        pageUrl
     );
 
+
     rewriteAttribute(
+        $,
         "source[src]",
-        "src"
+        "src",
+        pageUrl
     );
 
+
     rewriteAttribute(
+        $,
         "video[src]",
-        "src"
+        "src",
+        pageUrl
     );
+
 
     rewriteAttribute(
+        $,
         "audio[src]",
-        "src"
+        "src",
+        pageUrl
     );
 
 
-    /* Remove automatic page redirects */
+    rewriteAttribute(
+        $,
+        "input[src]",
+        "src",
+        pageUrl
+    );
+
+
+    rewriteAttribute(
+        $,
+        "track[src]",
+        "src",
+        pageUrl
+    );
+
+
+    rewriteSrcset(
+        $,
+        pageUrl
+    );
+
+
+    /* Rewrite inline style URLs */
+
+    $("[style]")
+        .each(
+            (index, element) => {
+
+                const style =
+                    $(element)
+                        .attr(
+                            "style"
+                        );
+
+                if (!style) {
+
+                    return;
+                }
+
+
+                $(element)
+                    .attr(
+                        "style",
+                        rewriteCSS(
+                            style,
+                            pageUrl
+                        )
+                    );
+            }
+        );
+
+
+    /* Rewrite <style> blocks */
+
+    $("style")
+        .each(
+            (index, element) => {
+
+                const css =
+                    $(element)
+                        .html();
+
+                if (!css) {
+
+                    return;
+                }
+
+
+                $(element)
+                    .html(
+                        rewriteCSS(
+                            css,
+                            pageUrl
+                        )
+                    );
+            }
+        );
+
+
+    /* Prevent automatic redirects */
 
     $(
         'meta[http-equiv="refresh"]'
@@ -643,15 +1076,19 @@ function rewriteHTML(
 
 
     /*
-       Add base information for relative URLs
-       used by some page scripts.
+       Remove <base> because it can interfere
+       with Schoolio's rewritten URLs.
     */
+
+    $("base")
+        .remove();
+
 
     $("head")
         .prepend(`
-            <meta
-            name="schoolio-proxy"
-            content="enabled">
+<meta
+name="schoolio-proxy"
+content="enabled">
         `);
 
 
@@ -660,71 +1097,225 @@ function rewriteHTML(
 
 
 /* =========================================================
-   REWRITE CSS url(...)
+   ESCAPE HTML
 ========================================================= */
 
-function rewriteCSS(
-    css,
-    pageUrl
-) {
+function escapeHtml(value) {
 
-    return css.replace(
+    return String(value)
 
-        /url\(\s*(['"]?)(.*?)\1\s*\)/gi,
+        .replace(
+            /&/g,
+            "&amp;"
+        )
 
-        (
-            whole,
-            quote,
-            value
-        ) => {
+        .replace(
+            /</g,
+            "&lt;"
+        )
 
-            if (
-                shouldSkipUrl(
-                    value
-                )
-            ) {
+        .replace(
+            />/g,
+            "&gt;"
+        )
 
-                return whole;
-            }
+        .replace(
+            /"/g,
+            "&quot;"
+        )
 
-
-            try {
-
-                const absolute =
-                    new URL(
-                        value,
-                        pageUrl
-                    );
-
-
-                if (
-                    absolute.protocol !== "http:" &&
-                    absolute.protocol !== "https:"
-                ) {
-
-                    return whole;
-                }
-
-
-                return (
-                    'url("' +
-                    createProxyUrl(
-                        absolute.href
-                    ) +
-                    '")'
-                );
-
-            } catch {
-
-                return whole;
-            }
-        }
-    );
+        .replace(
+            /'/g,
+            "&#039;"
+        );
 }
 
 
 /* =========================================================
-   SERVER HOME
+   ERROR PAGE
+========================================================= */
+
+function proxyErrorPage(
+    title,
+    message
+) {
+
+    return `
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+name="viewport"
+content="width=device-width, initial-scale=1">
+
+<title>
+${escapeHtml(title)}
+</title>
+
+<style>
+
+* {
+    box-sizing:
+        border-box;
+}
+
+html,
+body {
+
+    width:
+        100%;
+
+    height:
+        100%;
+
+    margin:
+        0;
+}
+
+body {
+
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    justify-content:
+        center;
+
+    padding:
+        25px;
+
+    font-family:
+        Arial,
+        sans-serif;
+
+    color:
+        #eeeeee;
+
+    background:
+        radial-gradient(
+            circle at 50% 0%,
+            rgba(255,38,61,.09),
+            transparent 40%
+        ),
+        #070707;
+}
+
+.card {
+
+    width:
+        min(
+            520px,
+            100%
+        );
+
+    padding:
+        27px;
+
+    border-radius:
+        15px;
+
+    background:
+        #0d0d0d;
+
+    border:
+        1px solid rgba(255,255,255,.07);
+
+    box-shadow:
+        0 25px 60px rgba(0,0,0,.5);
+}
+
+.icon {
+
+    width:
+        42px;
+
+    height:
+        42px;
+
+    display:
+        grid;
+
+    place-items:
+        center;
+
+    border-radius:
+        11px;
+
+    color:
+        #ff263d;
+
+    background:
+        rgba(255,38,61,.07);
+
+    border:
+        1px solid rgba(255,38,61,.16);
+
+    font-weight:
+        bold;
+}
+
+h2 {
+
+    margin:
+        15px 0 8px;
+
+    color:
+        #ff4055;
+}
+
+p {
+
+    margin:
+        0;
+
+    color:
+        #77777e;
+
+    line-height:
+        1.6;
+
+    font-size:
+        13px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+<div class="icon">
+!
+</div>
+
+<h2>
+${escapeHtml(title)}
+</h2>
+
+<p>
+${escapeHtml(message)}
+</p>
+
+</div>
+
+</body>
+
+</html>
+    `;
+}
+
+
+/* =========================================================
+   HOME
 ========================================================= */
 
 app.get(
@@ -792,9 +1383,6 @@ body {
 
 h1 {
 
-    margin-top:
-        0;
-
     color:
         #ff263d;
 }
@@ -802,7 +1390,7 @@ h1 {
 .online {
 
     color:
-        #62db78;
+        #67dd7d;
 }
 
 code {
@@ -810,11 +1398,11 @@ code {
     display:
         block;
 
-    margin-top:
-        15px;
-
     padding:
         12px;
+
+    margin-top:
+        10px;
 
     border-radius:
         8px;
@@ -846,20 +1434,27 @@ SCHOOLIO PROXY
 </p>
 
 <p>
-Schoolio backend is running.
+Backend connected.
 </p>
 
 <p>
-Test endpoint:
+Allowed domains:
+<strong>
+${ALLOWED_HOSTS.length}
+</strong>
 </p>
 
 <code>
 /api/test
 </code>
 
-<p>
-Proxy example:
-</p>
+<code>
+/api/allowed
+</code>
+
+<code>
+/api/check?url=https://en.wikipedia.org
+</code>
 
 <code>
 /proxy?url=https://en.wikipedia.org
@@ -876,7 +1471,7 @@ Proxy example:
 
 
 /* =========================================================
-   TEST API
+   API TEST
 ========================================================= */
 
 app.get(
@@ -887,6 +1482,9 @@ app.get(
 
             working:
                 true,
+
+            version:
+                "Schoolio Proxy 3.0",
 
             message:
                 "Schoolio connected successfully!",
@@ -899,7 +1497,7 @@ app.get(
 
 
 /* =========================================================
-   CHECK WHETHER WEBSITE IS ALLOWED
+   API CHECK
 ========================================================= */
 
 app.get(
@@ -938,11 +1536,11 @@ app.get(
                 allowed:
                     true,
 
-                url:
-                    url.href,
-
                 hostname:
-                    url.hostname
+                    url.hostname,
+
+                url:
+                    url.href
             });
 
 
@@ -964,7 +1562,7 @@ app.get(
 
 
 /* =========================================================
-   SHOW ALLOWED SITES
+   API ALLOWED
 ========================================================= */
 
 app.get(
@@ -978,13 +1576,15 @@ app.get(
 
             websites:
                 ALLOWED_HOSTS
+                    .slice()
+                    .sort()
         });
     }
 );
 
 
 /* =========================================================
-   GITHUB TEST
+   API GITHUB TEST
 ========================================================= */
 
 app.get(
@@ -995,11 +1595,8 @@ app.get(
 
             const response =
                 await fetch(
-
                     "https://api.github.com/repos/microsoft/vscode",
-
                     {
-
                         headers: {
 
                             "User-Agent":
@@ -1059,8 +1656,12 @@ app.get(
 
             return res
                 .status(400)
+                .type("html")
                 .send(
-                    "Missing url parameter."
+                    proxyErrorPage(
+                        "Missing Website",
+                        "No website URL was supplied."
+                    )
                 );
         }
 
@@ -1083,7 +1684,7 @@ app.get(
                 "application/octet-stream";
 
 
-            const declaredLength =
+            const contentLength =
                 Number(
                     response.headers.get(
                         "content-length"
@@ -1092,32 +1693,43 @@ app.get(
                 );
 
 
-            const maxSize =
-                10 *
+            /*
+               15 MB maximum per response.
+            */
+
+            const MAX_SIZE =
+                15 *
                 1024 *
                 1024;
 
 
             if (
-                declaredLength >
-                maxSize
+                contentLength >
+                MAX_SIZE
             ) {
 
                 return res
                     .status(413)
+                    .type("html")
                     .send(
-                        "Website response was too large."
+                        proxyErrorPage(
+                            "File Too Large",
+                            "This resource is too large for the Schoolio proxy."
+                        )
                     );
             }
 
 
-            /* ===============================
+            /* =============================================
                HTML
-            =============================== */
+            ============================================= */
 
             if (
                 contentType.includes(
                     "text/html"
+                ) ||
+                contentType.includes(
+                    "application/xhtml+xml"
                 )
             ) {
 
@@ -1130,13 +1742,17 @@ app.get(
                         html,
                         "utf8"
                     ) >
-                    maxSize
+                    MAX_SIZE
                 ) {
 
                     return res
                         .status(413)
+                        .type("html")
                         .send(
-                            "Website response was too large."
+                            proxyErrorPage(
+                                "Page Too Large",
+                                "This page is too large for the Schoolio proxy."
+                            )
                         );
                 }
 
@@ -1165,15 +1781,21 @@ app.get(
                 );
 
 
+                res.setHeader(
+                    "Cache-Control",
+                    "no-cache"
+                );
+
+
                 return res.send(
                     html
                 );
             }
 
 
-            /* ===============================
+            /* =============================================
                CSS
-            =============================== */
+            ============================================= */
 
             if (
                 contentType.includes(
@@ -1203,15 +1825,21 @@ app.get(
                 );
 
 
+                res.setHeader(
+                    "Cache-Control",
+                    "public, max-age=300"
+                );
+
+
                 return res.send(
                     css
                 );
             }
 
 
-            /* ===============================
-               OTHER FILE TYPES
-            =============================== */
+            /* =============================================
+               OTHER RESOURCES
+            ============================================= */
 
             const buffer =
                 await response.buffer();
@@ -1219,13 +1847,17 @@ app.get(
 
             if (
                 buffer.length >
-                maxSize
+                MAX_SIZE
             ) {
 
                 return res
                     .status(413)
+                    .type("html")
                     .send(
-                        "Website response was too large."
+                        proxyErrorPage(
+                            "File Too Large",
+                            "This resource is too large for the Schoolio proxy."
+                        )
                     );
             }
 
@@ -1241,6 +1873,34 @@ app.get(
             );
 
 
+            /*
+               Browser can cache images/fonts/etc. briefly.
+               This helps reduce repeated Render requests.
+            */
+
+            if (
+                contentType.startsWith(
+                    "image/"
+                ) ||
+                contentType.includes(
+                    "font"
+                )
+            ) {
+
+                res.setHeader(
+                    "Cache-Control",
+                    "public, max-age=600"
+                );
+
+            } else {
+
+                res.setHeader(
+                    "Cache-Control",
+                    "public, max-age=120"
+                );
+            }
+
+
             res.setHeader(
                 "X-Schoolio-Final-URL",
                 finalUrl
@@ -1254,125 +1914,40 @@ app.get(
 
         } catch(error) {
 
+            const message =
+                error.message ||
+                "The website could not be loaded.";
+
+
+            const notAllowed =
+                message.includes(
+                    "allowlist"
+                );
+
+
             return res
-                .status(403)
-                .send(`
-<!DOCTYPE html>
+                .status(
+                    notAllowed
+                    ?
+                    403
+                    :
+                    502
+                )
+                .type("html")
+                .send(
+                    proxyErrorPage(
+                        notAllowed
+                        ?
+                        "SITE NOT ALLOWED"
+                        :
+                        "PROXY ERROR",
 
-<html lang="en">
-
-<head>
-
-<meta charset="UTF-8">
-
-<style>
-
-body {
-
-    margin:
-        0;
-
-    padding:
-        40px;
-
-    font-family:
-        Arial,
-        sans-serif;
-
-    color:
-        #eeeeee;
-
-    background:
-        #070707;
-}
-
-.card {
-
-    max-width:
-        600px;
-
-    margin:
-        auto;
-
-    padding:
-        25px;
-
-    border:
-        1px solid #222222;
-
-    border-radius:
-        14px;
-
-    background:
-        #0d0d0d;
-}
-
-h2 {
-
-    color:
-        #ff263d;
-}
-
-</style>
-
-</head>
-
-<body>
-
-<div class="card">
-
-<h2>
-Schoolio Proxy
-</h2>
-
-<p>
-${escapeHtml(error.message)}
-</p>
-
-</div>
-
-</body>
-
-</html>
-                `);
+                        message
+                    )
+                );
         }
     }
 );
-
-
-/* =========================================================
-   ESCAPE ERROR TEXT
-========================================================= */
-
-function escapeHtml(value) {
-
-    return String(value)
-
-        .replace(
-            /&/g,
-            "&amp;"
-        )
-
-        .replace(
-            /</g,
-            "&lt;"
-        )
-
-        .replace(
-            />/g,
-            "&gt;"
-        )
-
-        .replace(
-            /"/g,
-            "&quot;"
-        )
-
-        .replace(
-            /'/g,
-            "&#039;"
-        );
-}
 
 
 /* =========================================================
@@ -1394,7 +1969,7 @@ app.use(
 
 
 /* =========================================================
-   START SERVER
+   START
 ========================================================= */
 
 app.listen(
@@ -1403,13 +1978,25 @@ app.listen(
     () => {
 
         console.log(
-            "Schoolio server running on port " +
+            "=================================="
+        );
+
+        console.log(
+            "SCHOOLIO PROXY 3.0"
+        );
+
+        console.log(
+            "Port: " +
             PORT
         );
 
         console.log(
             "Allowed domains: " +
             ALLOWED_HOSTS.length
+        );
+
+        console.log(
+            "=================================="
         );
     }
 );
