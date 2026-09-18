@@ -168,7 +168,8 @@ const ALLOWED_HOSTS = [
     /* Productivity */
     "canva.com",
     "figma.com",
-    "notion.so"
+    "notion.so",
+    "petezah.games"
 ];
 
 
