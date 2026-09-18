@@ -1,103 +1,114 @@
-const express = require("express");
-const fetch = require("node-fetch");
+const http = require('http');
+const url = require('url');
+const { request } = require('http');
 
-const app = express();
+const PORT = 3000;
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Helper to send responses
+function sendResponse(res, statusCode, data, contentType = 'application/json') {
+  res.writeHead(statusCode, { 'Content-Type': contentType });
+  res.end(data);
+}
 
-// Allow CORS
-app.use((req, res, next) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    next();
-});
+// Handle incoming requests
+const server = http.createServer(async (req, res) => {
+  const parsedUrl = url.parse(req.url, true);
+  const path = parsedUrl.pathname;
+  const method = req.method;
 
-// Root endpoint
-app.get("/", (req, res) => {
-    res.send(`
-        <h1>Schoolio Server</h1>
-        <p>✅ Proxy backend is online!</p>
-    `);
-});
+  // Root route
+  if (path === '/' && method === 'GET') {
+    sendResponse(res, 200, `
+      <h1>Schoolio Server</h1>
+      <p>✅ Proxy backend is online!</p>
+    `, 'text/html');
+    return;
+  }
 
-// Test API
-app.get("/api/test", (req, res) => {
-    res.json({
-        working: true,
-        message: "Schoolio connected successfully!"
-    });
-});
+  // Test API
+  if (path === '/api/test' && method === 'GET') {
+    sendResponse(res, 200, JSON.stringify({
+      working: true,
+      message: "Schoolio connected successfully!"
+    }));
+    return;
+  }
 
-// Example API
-app.get("/api/github", async (req, res) => {
+  // Example /api/github endpoint
+  if (path === '/api/github' && method === 'GET') {
     try {
-        const response = await fetch(
-            "https://api.github.com/repos/microsoft/vscode",
-            {
-                headers: {
-                    "User-Agent": "Schoolio"
-                }
-            }
-        );
-        const data = await response.json();
-        res.json({
-            name: data.name,
-            stars: data.stargazers_count,
-            description: data.description
+      const options = {
+        hostname: 'api.github.com',
+        path: '/repos/microsoft/vscode',
+        headers: {
+          'User-Agent': 'Schoolio'
+        }
+      };
+
+      const githubReq = request(options, (githubRes) => {
+        let data = '';
+        githubRes.on('data', chunk => data += chunk);
+        githubRes.on('end', () => {
+          const parsed = JSON.parse(data);
+          sendResponse(res, 200, JSON.stringify({
+            name: parsed.name,
+            stars: parsed.stargazers_count,
+            description: parsed.description
+          }));
         });
-    } catch (error) {
-        res.status(500).json({ error: "Request failed" });
+      });
+
+      githubReq.on('error', () => {
+        sendResponse(res, 500, JSON.stringify({ error: 'Request failed' }));
+      });
+
+      githubReq.end();
+    } catch {
+      sendResponse(res, 500, JSON.stringify({ error: 'Request failed' }));
     }
-});
+    return;
+  }
 
-// Proxy endpoint to handle any website request
-app.all("/proxy", async (req, res) => {
-    const targetUrl = req.query.url;
-
+  // Proxy endpoint
+  if (path === '/proxy' && method === 'GET') {
+    const targetUrl = parsedUrl.query.url;
     if (!targetUrl) {
-        return res.status(400).json({ error: "Missing 'url' query parameter" });
+      sendResponse(res, 400, JSON.stringify({ error: "Missing 'url' query parameter" }));
+      return;
     }
 
-    try {
-        const headers = { ...req.headers };
-        delete headers.host; // Remove host header to avoid conflicts
+    // Fetch the target URL using built-in http/https
+    const fetchUrl = new URL(targetUrl);
+    const options = {
+      hostname: fetchUrl.hostname,
+      port: fetchUrl.port || (fetchUrl.protocol === 'https:' ? 443 : 80),
+      path: fetchUrl.pathname + fetchUrl.search,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Schoolio'
+      }
+    };
 
-        const fetchOptions = {
-            method: req.method,
-            headers: headers,
-        };
+    const lib = fetchUrl.protocol === 'https:' ? require('https') : require('http');
 
-        if (req.method !== "GET" && req.body) {
-            fetchOptions.body = JSON.stringify(req.body);
-            fetchOptions.headers['Content-Type'] = 'application/json';
-        }
+    const proxyReq = lib.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
 
-        const response = await fetch(targetUrl, fetchOptions);
-        const contentType = response.headers.get("content-type");
+    proxyReq.on('error', () => {
+      sendResponse(res, 500, JSON.stringify({ error: 'Error fetching target URL' }));
+    });
 
-        res.status(response.status);
-        if (contentType && contentType.includes("application/json")) {
-            const data = await response.json();
-            res.json(data);
-        } else {
-            const buffer = await response.buffer();
-            res.send(buffer);
-        }
-    } catch (err) {
-        res.status(500).json({ error: "Error fetching the target URL", details: err.message });
-    }
+    proxyReq.end();
+    return;
+  }
+
+  // 404 for other routes
+  sendResponse(res, 404, JSON.stringify({ error: 'Not found' }));
 });
 
-// Note: Remove or comment out the catch-all route if you only want proxy functionality
-/*
-app.all("*", async (req, res) => {
-    res.status(404).json({ error: "Route not found" });
-});
-*/
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, "0.0.0.0", () => {
-    console.log("Schoolio server running on port " + PORT);
+// Start server
+server.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
 });
