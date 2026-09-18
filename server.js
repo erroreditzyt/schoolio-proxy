@@ -1,7 +1,7 @@
 const http = require('http');
 const url = require('url');
-const { request } = require('http');
 
+// Choose port
 const PORT = 3000;
 
 // Helper to send responses
@@ -10,13 +10,13 @@ function sendResponse(res, statusCode, data, contentType = 'application/json') {
   res.end(data);
 }
 
-// Handle incoming requests
+// Handle requests
 const server = http.createServer(async (req, res) => {
   const parsedUrl = url.parse(req.url, true);
   const path = parsedUrl.pathname;
   const method = req.method;
 
-  // Root route
+  // Root
   if (path === '/' && method === 'GET') {
     sendResponse(res, 200, `
       <h1>Schoolio Server</h1>
@@ -25,90 +25,75 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Test API
+  // /api/test
   if (path === '/api/test' && method === 'GET') {
-    sendResponse(res, 200, JSON.stringify({
-      working: true,
-      message: "Schoolio connected successfully!"
-    }));
+    sendResponse(res, 200, JSON.stringify({ working: true, message: "Schoolio connected successfully!" }));
     return;
   }
 
-  // Example /api/github endpoint
+  // /api/github
   if (path === '/api/github' && method === 'GET') {
-    try {
-      const options = {
-        hostname: 'api.github.com',
-        path: '/repos/microsoft/vscode',
-        headers: {
-          'User-Agent': 'Schoolio'
-        }
-      };
-
-      const githubReq = request(options, (githubRes) => {
-        let data = '';
-        githubRes.on('data', chunk => data += chunk);
-        githubRes.on('end', () => {
-          const parsed = JSON.parse(data);
-          sendResponse(res, 200, JSON.stringify({
-            name: parsed.name,
-            stars: parsed.stargazers_count,
-            description: parsed.description
-          }));
-        });
+    // Use built-in https for request
+    const https = require('https');
+    const options = {
+      hostname: 'api.github.com',
+      path: '/repos/microsoft/vscode',
+      headers: { 'User-Agent': 'Schoolio' }
+    };
+    const reqGitHub = https.request(options, (resp) => {
+      let data = '';
+      resp.on('data', chunk => data += chunk);
+      resp.on('end', () => {
+        const parsed = JSON.parse(data);
+        sendResponse(res, 200, JSON.stringify({
+          name: parsed.name,
+          stars: parsed.stargazers_count,
+          description: parsed.description
+        }));
       });
-
-      githubReq.on('error', () => {
-        sendResponse(res, 500, JSON.stringify({ error: 'Request failed' }));
-      });
-
-      githubReq.end();
-    } catch {
+    });
+    reqGitHub.on('error', () => {
       sendResponse(res, 500, JSON.stringify({ error: 'Request failed' }));
-    }
+    });
+    reqGitHub.end();
     return;
   }
 
-  // Proxy endpoint
+  // /proxy?url=...
   if (path === '/proxy' && method === 'GET') {
     const targetUrl = parsedUrl.query.url;
     if (!targetUrl) {
       sendResponse(res, 400, JSON.stringify({ error: "Missing 'url' query parameter" }));
       return;
     }
-
-    // Fetch the target URL using built-in http/https
+    // Fetch the target URL using http or https
     const fetchUrl = new URL(targetUrl);
+    const lib = fetchUrl.protocol === 'https:' ? require('https') : require('http');
+
     const options = {
       hostname: fetchUrl.hostname,
       port: fetchUrl.port || (fetchUrl.protocol === 'https:' ? 443 : 80),
       path: fetchUrl.pathname + fetchUrl.search,
       method: 'GET',
-      headers: {
-        'User-Agent': 'Schoolio'
-      }
+      headers: { 'User-Agent': 'Schoolio' }
     };
 
-    const lib = fetchUrl.protocol === 'https:' ? require('https') : require('http');
-
-    const proxyReq = lib.request(options, (proxyRes) => {
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
-      proxyRes.pipe(res);
+    const reqFetch = lib.request(options, (resp) => {
+      res.writeHead(resp.statusCode, resp.headers);
+      resp.pipe(res);
     });
-
-    proxyReq.on('error', () => {
+    reqFetch.on('error', () => {
       sendResponse(res, 500, JSON.stringify({ error: 'Error fetching target URL' }));
     });
-
-    proxyReq.end();
+    reqFetch.end();
     return;
   }
 
-  // 404 for other routes
+  // Not found
   sendResponse(res, 404, JSON.stringify({ error: 'Not found' }));
 });
 
-// Start server
+// Run server
 server.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
