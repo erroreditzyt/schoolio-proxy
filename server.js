@@ -242,7 +242,8 @@ const DEFAULT_ALLOWED_HOSTS = [
 
     "canva.com",
     "figma.com",
-    "notion.so"
+    "notion.so",
+   "petezahgames.com"
 ];
 
 
