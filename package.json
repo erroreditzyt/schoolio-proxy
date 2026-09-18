@@ -1,8 +1,8 @@
 {
   "name": "schoolio-proxy",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "Schoolio approved website proxy",
   "main": "server.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
@@ -10,7 +10,8 @@
     "node": ">=18"
   },
   "dependencies": {
+    "cheerio": "^1.0.0",
     "express": "^5.1.0",
-    "node-fetch": "^3.0.0"  // Add this line to include node-fetch
+    "node-fetch": "^2.7.0"
   }
 }
