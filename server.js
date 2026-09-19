@@ -1,2196 +1,843 @@
 const express = require("express");
-const fetch = require("node-fetch");
 const dns = require("dns").promises;
 const net = require("net");
 const cheerio = require("cheerio");
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 
-const PORT =
-    process.env.PORT ||
-    3000;
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
-const MAX_RESPONSE_BYTES =
-    10 * 1024 * 1024;
+// Allow Schoolio opened as a local HTML file to call the backend.
+app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,HEAD,OPTIONS");
 
-
-/* =========================================================
-   EXPRESS
-========================================================= */
-
-app.use(
-    express.json({
-        limit: "1mb"
-    })
-);
-
-app.use(
-    express.urlencoded({
-        extended: true,
-        limit: "1mb"
-    })
-);
-
-
-/* =========================================================
-   CORS
-========================================================= */
-
-app.use(
-    (req, res, next) => {
-
-        res.setHeader(
-            "Access-Control-Allow-Origin",
-            "*"
-        );
-
-        res.setHeader(
-            "Access-Control-Allow-Headers",
-            "Content-Type"
-        );
-
-        res.setHeader(
-            "Access-Control-Allow-Methods",
-            "GET,POST,HEAD,OPTIONS"
-        );
-
-        if (
-            req.method ===
-            "OPTIONS"
-        ) {
-
-            return res.sendStatus(
-                204
-            );
-        }
-
-        next();
+    if (req.method === "OPTIONS") {
+        return res.sendStatus(204);
     }
-);
 
-
-/* =========================================================
-   APPROVED DOMAINS
-
-   IMPORTANT:
-
-   Adding:
-
-       "roblox.com"
-
-   automatically allows:
-
-       roblox.com
-       www.roblox.com
-       create.roblox.com
-       games.roblox.com
-       anything.roblox.com
-
-   It also allows ANY path/query under the domain:
-
-       /games/123
-       /users/123/profile
-       ?placeId=123
-
-========================================================= */
+    next();
+});
 
 const DEFAULT_ALLOWED_HOSTS = [
-
-    /* ==============================
-       PETEZAH
-    ============================== */
-
+    // Schoolio-approved game / Roblox hosts
+    // Base-domain matching below automatically allows every subdomain,
+    // path, query string, and http/https variation for these hosts.
     "petezahgames.com",
-
     "petezahgames.github.io",
-
-
-    /* ==============================
-       ROBLOX
-    ============================== */
-
     "roblox.com",
-
     "rbxcdn.com",
 
-
-    /* ==============================
-       GITHUB
-    ============================== */
-
+    // Coding / development
     "github.com",
-
     "api.github.com",
-
     "docs.github.com",
-
     "githubusercontent.com",
-
     "raw.githubusercontent.com",
-
-    "githubassets.com",
-
-
-    /* ==============================
-       CODING
-    ============================== */
-
     "stackoverflow.com",
-
     "stackexchange.com",
-
     "codepen.io",
-
     "jsfiddle.net",
-
     "replit.com",
-
     "npmjs.com",
-
     "nodejs.org",
-
     "python.org",
-
     "pypi.org",
-
-
-    /* ==============================
-       WEB DEVELOPMENT
-    ============================== */
-
     "developer.mozilla.org",
-
     "mozilla.org",
-
-    "mozilla.net",
-
     "w3.org",
-
     "w3schools.com",
-
-
-    /* ==============================
-       CDN / ASSETS
-    ============================== */
-
     "cloudflare.com",
-
     "cdnjs.cloudflare.com",
-
     "jsdelivr.net",
-
     "unpkg.com",
-
     "bootstrapcdn.com",
-
     "fontawesome.com",
 
-
-    /* ==============================
-       HOSTING
-    ============================== */
-
-    "render.com",
-
-    "vercel.com",
-
-    "netlify.com",
-
-    "railway.app",
-
-
-    /* ==============================
-       WIKIPEDIA / REFERENCE
-    ============================== */
-
+    // Reference / learning
     "wikipedia.org",
-
     "wikimedia.org",
-
     "wiktionary.org",
-
     "britannica.com",
-
     "merriam-webster.com",
-
     "dictionary.com",
-
     "thesaurus.com",
-
     "archive.org",
-
     "gutenberg.org",
-
-
-    /* ==============================
-       EDUCATION
-    ============================== */
-
     "khanacademy.org",
-
-    "kastatic.org",
-
-    "kasandbox.org",
-
     "quizlet.com",
-
     "desmos.com",
-
     "geogebra.org",
-
     "wolframalpha.com",
 
-
-    /* ==============================
-       MICROSOFT
-    ============================== */
-
+    // Microsoft / public documentation
     "microsoft.com",
-
     "learn.microsoft.com",
-
     "support.microsoft.com",
-
     "office.com",
 
-
-    /* ==============================
-       GOOGLE PUBLIC SERVICES
-    ============================== */
-
+    // Google public services / assets
     "google.com",
-
     "googleapis.com",
-
     "gstatic.com",
-
     "googleusercontent.com",
-
     "fonts.googleapis.com",
-
     "fonts.gstatic.com",
-
     "scholar.google.com",
-
     "books.google.com",
-
     "translate.google.com",
 
+    // Hosting / web tools
+    "render.com",
+    "vercel.com",
+    "netlify.com",
+    "railway.app",
 
-    /* ==============================
-       SCIENCE / GOVERNMENT
-    ============================== */
-
+    // Science / government
     "nasa.gov",
-
     "noaa.gov",
-
     "usgs.gov",
-
     "nih.gov",
-
     "cdc.gov",
-
     "who.int",
-
     "weather.gov",
-
     "census.gov",
-
     "data.gov",
-
     "loc.gov",
-
     "sec.gov",
-
     "irs.gov",
-
     "federalreserve.gov",
-
     "stlouisfed.org",
-
     "bea.gov",
-
     "bls.gov",
-
     "finra.org",
 
-
-    /* ==============================
-       FINANCE
-    ============================== */
-
+    // Finance / news / general information
     "investopedia.com",
-
     "nasdaq.com",
-
     "nyse.com",
-
     "yahoo.com",
-
-
-    /* ==============================
-       NEWS
-    ============================== */
-
     "reuters.com",
-
     "apnews.com",
-
     "bbc.com",
-
     "npr.org",
-
-
-    /* ==============================
-       GENERAL
-    ============================== */
-
     "imdb.com",
-
     "rottentomatoes.com",
-
     "goodreads.com",
-
     "medium.com",
-
     "substack.com",
 
-
-    /* ==============================
-       PRODUCTIVITY
-    ============================== */
-
+    // Productivity / design public pages
     "canva.com",
-
     "figma.com",
-
     "notion.so",
 
-
-    /* ==============================
-       TEST
-    ============================== */
-
-    "example.com"
+    // Gaming / game platforms explicitly added to Schoolio
+    "1001games.com",
+    "1games.io",
+    "addictinggames.com",
+    "agame.com",
+    "armor.com",
+    "azgames.io",
+    "battle.net",
+    "bbogd.net",
+    "blizzard.com",
+    "boardgamearena.com",
+    "browsergames.gg",
+    "camadia.com",
+    "connectionsgame.org",
+    "construct.net",
+    "coolmathgames.com",
+    "crazygames.com",
+    "discord.com",
+    "ea.com",
+    "epicgames.com",
+    "freecivweb.org",
+    "galatium.net",
+    "gamemonetize.com",
+    "geometry-lite.io",
+    "gog.com",
+    "immoralattack.com",
+    "immortalday.com",
+    "itch.io",
+    "kongregate.com",
+    "landofnevard.net",
+    "mademanmafia.com",
+    "mafiareturns.com",
+    "miniclip.com",
+    "mobsters-united.com",
+    "mpogr.com",
+    "newgrounds.com",
+    "newyork-mafia.com",
+    "nintendo.com",
+    "piratequest.org",
+    "playstation.com",
+    "playsuikagame.com",
+    "pokerogue.io",
+    "poki.com",
+    "puzzlist.com",
+    "riotgames.com",
+    "simdynasty.com",
+    "slithergame.io",
+    "slopeonline.online",
+    "speedrun.com",
+    "steampowered.com",
+    "suikagame.com",
+    "suikagame.io",
+    "top100webgames.com",
+    "topwebgames.com",
+    "twitch.tv",
+    "twoplayergames.org",
+    "ubisoft.com",
+    "unity.com",
+    "wafflegame.net",
+    "wordle2.io",
+    "xbox.com",
+    "y8.com",
 ];
 
-
-/* =========================================================
-   OPTIONAL EXTRA DOMAINS FROM RENDER
-
-   Environment variable:
-
-   ALLOWED_HOSTS
-
-   Example value:
-
-   example1.com,example2.com
-========================================================= */
-
-const EXTRA_ALLOWED_HOSTS =
-    String(
-        process.env.ALLOWED_HOSTS ||
-        ""
-    )
+const EXTRA_ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || "")
     .split(",")
-    .map(
-        host =>
-            host
-                .trim()
-                .toLowerCase()
-    )
+    .map(host => host.trim().toLowerCase())
     .filter(Boolean);
 
+const ALLOWED_HOSTS = Array.from(
+    new Set([...DEFAULT_ALLOWED_HOSTS, ...EXTRA_ALLOWED_HOSTS])
+);
 
-const ALLOWED_HOSTS =
-    Array.from(
-        new Set([
-            ...DEFAULT_ALLOWED_HOSTS,
-            ...EXTRA_ALLOWED_HOSTS
-        ])
-    );
-
-
-/* =========================================================
-   HOST MATCHING
-========================================================= */
-
-function normalizeHost(
-    hostname
-) {
-
-    return String(
-        hostname ||
-        ""
-    )
-    .trim()
-    .toLowerCase()
-    .replace(
-        /\.$/,
-        ""
-    );
+function normalizeHost(hostname) {
+    return String(hostname || "").toLowerCase().replace(/\.$/, "");
 }
 
+function isAllowedHost(hostname) {
+    const host = normalizeHost(hostname);
 
-function isAllowedHost(
-    hostname
-) {
-
-    const host =
-        normalizeHost(
-            hostname
-        );
-
-
-    return ALLOWED_HOSTS.some(
-        domain => {
-
-            const allowed =
-                normalizeHost(
-                    domain
-                );
-
-
-            return (
-
-                host ===
-                allowed
-
-                ||
-
-                host.endsWith(
-                    "." +
-                    allowed
-                )
-            );
-        }
-    );
+    return ALLOWED_HOSTS.some(domain => {
+        const allowed = normalizeHost(domain);
+        return host === allowed || host.endsWith("." + allowed);
+    });
 }
 
+function isPrivateIPv4(ip) {
+    const parts = ip.split(".").map(Number);
+    if (parts.length !== 4 || parts.some(Number.isNaN)) return true;
 
-/* =========================================================
-   PRIVATE IP PROTECTION
-========================================================= */
-
-function isPrivateIPv4(
-    ip
-) {
-
-    const parts =
-        ip
-            .split(".")
-            .map(Number);
-
-
-    if (
-        parts.length !==
-        4
-    ) {
-
-        return true;
-    }
-
-
-    if (
-        parts.some(
-            value =>
-                !Number.isInteger(
-                    value
-                )
-        )
-    ) {
-
-        return true;
-    }
-
-
-    const [
-        a,
-        b
-    ] =
-        parts;
-
+    const [a, b] = parts;
 
     return (
-
-        a === 0
-
-        ||
-
-        a === 10
-
-        ||
-
-        a === 127
-
-        ||
-
-        (
-            a === 169
-            &&
-            b === 254
-        )
-
-        ||
-
-        (
-            a === 172
-            &&
-            b >= 16
-            &&
-            b <= 31
-        )
-
-        ||
-
-        (
-            a === 192
-            &&
-            b === 168
-        )
-
-        ||
-
-        (
-            a === 100
-            &&
-            b >= 64
-            &&
-            b <= 127
-        )
-
-        ||
-
-        a >= 224
+        a === 0 ||
+        a === 10 ||
+        a === 127 ||
+        (a === 169 && b === 254) ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        (a === 100 && b >= 64 && b <= 127) ||
+        (a >= 224)
     );
 }
 
+function isPrivateIPv6(ip) {
+    const value = ip.toLowerCase();
 
-function isPrivateIPv6(
-    ip
-) {
-
-    const value =
-        String(
-            ip
-        )
-        .toLowerCase();
-
-
-    if (
-        value.startsWith(
-            "::ffff:"
-        )
-    ) {
-
-        const mapped =
-            value.slice(
-                7
-            );
-
-
-        return net.isIPv4(
-            mapped
-        )
-        ?
-        isPrivateIPv4(
-            mapped
-        )
-        :
-        true;
+    if (value.startsWith("::ffff:")) {
+        const mapped = value.slice(7);
+        return net.isIPv4(mapped) ? isPrivateIPv4(mapped) : true;
     }
-
 
     return (
-
-        value ===
-        "::"
-
-        ||
-
-        value ===
-        "::1"
-
-        ||
-
-        value.startsWith(
-            "fc"
-        )
-
-        ||
-
-        value.startsWith(
-            "fd"
-        )
-
-        ||
-
-        value.startsWith(
-            "fe80:"
-        )
+        value === "::" ||
+        value === "::1" ||
+        value.startsWith("fc") ||
+        value.startsWith("fd") ||
+        value.startsWith("fe80:")
     );
 }
 
-
-function isPrivateIP(
-    ip
-) {
-
-    if (
-        net.isIPv4(
-            ip
-        )
-    ) {
-
-        return isPrivateIPv4(
-            ip
-        );
-    }
-
-
-    if (
-        net.isIPv6(
-            ip
-        )
-    ) {
-
-        return isPrivateIPv6(
-            ip
-        );
-    }
-
-
+function isPrivateIP(ip) {
+    if (net.isIPv4(ip)) return isPrivateIPv4(ip);
+    if (net.isIPv6(ip)) return isPrivateIPv6(ip);
     return true;
 }
 
-
-/* =========================================================
-   URL VALIDATION
-========================================================= */
-
-async function validateUrl(
-    input
-) {
-
+async function validateUrl(input) {
     let url;
 
-
     try {
-
-        url =
-            new URL(
-                input
-            );
-
+        url = new URL(input);
     } catch {
-
-        throw new Error(
-            "Invalid URL."
-        );
+        throw new Error("Invalid URL");
     }
 
-
-    if (
-        url.protocol !==
-        "http:"
-        &&
-        url.protocol !==
-        "https:"
-    ) {
-
-        throw new Error(
-            "Only HTTP and HTTPS URLs are supported."
-        );
+    if (!["http:", "https:"].includes(url.protocol)) {
+        throw new Error("Only HTTP and HTTPS URLs are supported");
     }
 
-
-    if (
-        url.username
-        ||
-        url.password
-    ) {
-
-        throw new Error(
-            "URLs containing usernames or passwords are not supported."
-        );
+    if (!isAllowedHost(url.hostname)) {
+        throw new Error("Website is not in the Schoolio allowlist");
     }
 
+    const addresses = await dns.lookup(url.hostname, { all: true });
 
-    if (
-        !isAllowedHost(
-            url.hostname
-        )
-    ) {
-
-        throw new Error(
-            `${url.hostname} is not in the Schoolio allowlist.`
-        );
+    if (!addresses.length) {
+        throw new Error("Could not resolve hostname");
     }
 
-
-    let addresses;
-
-
-    try {
-
-        addresses =
-            await dns.lookup(
-                url.hostname,
-                {
-                    all: true
-                }
-            );
-
-    } catch {
-
-        throw new Error(
-            "Could not resolve hostname."
-        );
-    }
-
-
-    if (
-        !addresses.length
-    ) {
-
-        throw new Error(
-            "Could not resolve hostname."
-        );
-    }
-
-
-    for (
-        const result
-        of addresses
-    ) {
-
-        if (
-            isPrivateIP(
-                result.address
-            )
-        ) {
-
-            throw new Error(
-                "Private/internal network addresses are blocked."
-            );
+    for (const item of addresses) {
+        if (isPrivateIP(item.address)) {
+            throw new Error("Private/internal network addresses are blocked");
         }
     }
-
 
     return url;
 }
 
-
-/* =========================================================
-   SAFE FETCH
-========================================================= */
-
-async function safeFetch(
-    input,
-    options = {},
-    redirects = 0
-) {
-
-    if (
-        redirects >
-        6
-    ) {
-
-        throw new Error(
-            "Too many redirects."
-        );
+async function safeFetch(input, options = {}, redirects = 0) {
+    if (redirects > 5) {
+        throw new Error("Too many redirects");
     }
 
+    const url = await validateUrl(input);
 
-    const url =
-        await validateUrl(
-            input
-        );
+    const response = await fetch(url.href, {
+        ...options,
+        redirect: "manual"
+    });
 
+    if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) throw new Error("Redirect has no destination");
 
-    const response =
-        await fetch(
-            url.href,
-            {
-                ...options,
-
-                redirect:
-                    "manual"
-            }
-        );
-
-
-    if (
-        response.status >=
-        300
-        &&
-        response.status <
-        400
-    ) {
-
-        const location =
-            response.headers.get(
-                "location"
-            );
-
-
-        if (!location) {
-
-            throw new Error(
-                "Redirect destination missing."
-            );
-        }
-
-
-        const next =
-            new URL(
-                location,
-                url
-            );
-
-
-        return safeFetch(
-            next.href,
-            options,
-            redirects + 1
-        );
+        const next = new URL(location, url);
+        return safeFetch(next.href, options, redirects + 1);
     }
 
-
-    return {
-
-        response,
-
-        finalUrl:
-            url
-    };
+    return { response, finalUrl: url };
 }
 
-
-/* =========================================================
-   URL REWRITE HELPERS
-========================================================= */
-
-function shouldSkipUrl(
-    value
-) {
-
-    const url =
-        String(
-            value ||
-            ""
-        )
-        .trim();
-
+function shouldSkipUrl(value) {
+    const v = String(value || "").trim();
 
     return (
-
-        !url
-
-        ||
-
-        url.startsWith(
-            "#"
-        )
-
-        ||
-
-        /^(data|blob|javascript|mailto|tel):/i
-        .test(
-            url
-        )
+        !v ||
+        v.startsWith("#") ||
+        /^(data|blob|javascript|mailto|tel):/i.test(v)
     );
 }
 
-
-function proxiedUrl(
-    value,
-    baseUrl
-) {
-
-    if (
-        shouldSkipUrl(
-            value
-        )
-    ) {
-
-        return value;
-    }
-
+function proxiedUrl(value, baseUrl) {
+    if (shouldSkipUrl(value)) return value;
 
     try {
+        const absolute = new URL(value, baseUrl);
 
-        const absolute =
-            new URL(
-                value,
-                baseUrl
-            );
-
-
-        if (
-            absolute.protocol !==
-            "http:"
-            &&
-            absolute.protocol !==
-            "https:"
-        ) {
-
+        if (!["http:", "https:"].includes(absolute.protocol)) {
             return value;
         }
 
-
-        if (
-            !isAllowedHost(
-                absolute.hostname
-            )
-        ) {
-
-            return (
-                "/blocked?url=" +
-                encodeURIComponent(
-                    absolute.href
-                )
-            );
+        if (!isAllowedHost(absolute.hostname)) {
+            return `/blocked?url=${encodeURIComponent(absolute.href)}`;
         }
 
-
-        return (
-            "/proxy?url=" +
-            encodeURIComponent(
-                absolute.href
-            )
-        );
-
-
+        return `/proxy?url=${encodeURIComponent(absolute.href)}`;
     } catch {
-
         return value;
     }
 }
 
+function rewriteSrcset(srcset, baseUrl) {
+    return String(srcset || "")
+        .split(",")
+        .map(part => {
+            const bits = part.trim().split(/\s+/);
 
-/* =========================================================
-   SRCSET REWRITE
-========================================================= */
-
-function rewriteSrcset(
-    srcset,
-    baseUrl
-) {
-
-    return String(
-        srcset ||
-        ""
-    )
-    .split(",")
-    .map(
-        part => {
-
-            const bits =
-                part
-                    .trim()
-                    .split(
-                        /\s+/
-                    );
-
-
-            if (
-                !bits[0]
-            ) {
-
+            if (!bits[0]) {
                 return part;
             }
 
+            bits[0] = proxiedUrl(bits[0], baseUrl);
 
-            bits[0] =
-                proxiedUrl(
-                    bits[0],
-                    baseUrl
-                );
-
-
-            return bits.join(
-                " "
-            );
-        }
-    )
-    .join(
-        ", "
-    );
+            return bits.join(" ");
+        })
+        .join(", ");
 }
 
-
-/* =========================================================
-   CSS REWRITE
-========================================================= */
-
-function rewriteCss(
-    css,
-    baseUrl
-) {
-
-    return String(
-        css ||
-        ""
-    )
-    .replace(
-
+function rewriteCss(css, baseUrl) {
+    return String(css || "").replace(
         /url\(\s*(['"]?)(.*?)\1\s*\)/gi,
-
-        (
-            match,
-            quote,
-            raw
-        ) => {
-
-            if (
-                shouldSkipUrl(
-                    raw
-                )
-            ) {
-
+        (match, quote, raw) => {
+            if (shouldSkipUrl(raw)) {
                 return match;
             }
 
+            const rewritten = proxiedUrl(raw, baseUrl);
 
-            const rewritten =
-                proxiedUrl(
-                    raw,
-                    baseUrl
-                );
-
-
-            return (
-                `url(${quote}${rewritten}${quote})`
-            );
+            return `url(${quote}${rewritten}${quote})`;
         }
     );
 }
 
+function rewriteHtml(html, pageUrl) {
+    const $ = cheerio.load(html, {
+        decodeEntities: false
+    });
 
-/* =========================================================
-   HTML REWRITE
-========================================================= */
-
-function rewriteHtml(
-    html,
-    pageUrl
-) {
-
-    const $ =
-        cheerio.load(
-            html,
-            {
-                decodeEntities:
-                    false
-            }
-        );
-
-
-    const attributes = [
-
-        [
-            "a[href]",
-            "href"
-        ],
-
-        [
-            "link[href]",
-            "href"
-        ],
-
-        [
-            "img[src]",
-            "src"
-        ],
-
-        [
-            "script[src]",
-            "src"
-        ],
-
-        [
-            "iframe[src]",
-            "src"
-        ],
-
-        [
-            "source[src]",
-            "src"
-        ],
-
-        [
-            "video[src]",
-            "src"
-        ],
-
-        [
-            "audio[src]",
-            "src"
-        ],
-
-        [
-            "input[src]",
-            "src"
-        ],
-
-        [
-            "track[src]",
-            "src"
-        ],
-
-        [
-            "form[action]",
-            "action"
-        ]
+    const attrs = [
+        ["a[href]", "href"],
+        ["link[href]", "href"],
+        ["img[src]", "src"],
+        ["script[src]", "src"],
+        ["iframe[src]", "src"],
+        ["source[src]", "src"],
+        ["video[src]", "src"],
+        ["audio[src]", "src"],
+        ["form[action]", "action"]
     ];
 
+    for (const [selector, attr] of attrs) {
+        $(selector).each((_, element) => {
+            const current = $(element).attr(attr);
 
-    for (
-        const [
-            selector,
-            attribute
-        ]
-        of attributes
-    ) {
-
-        $(
-            selector
-        )
-        .each(
-            (
-                index,
-                element
-            ) => {
-
-                const current =
-                    $(
-                        element
-                    )
-                    .attr(
-                        attribute
-                    );
-
-
-                if (
-                    current
-                ) {
-
-                    $(
-                        element
-                    )
-                    .attr(
-                        attribute,
-                        proxiedUrl(
-                            current,
-                            pageUrl
-                        )
-                    );
-                }
+            if (current) {
+                $(element).attr(
+                    attr,
+                    proxiedUrl(current, pageUrl)
+                );
             }
-        );
+        });
     }
 
+    $("[srcset]").each((_, element) => {
+        const srcset = $(element).attr("srcset");
 
-    /* SRCSET */
-
-    $(
-        "[srcset]"
-    )
-    .each(
-        (
-            index,
-            element
-        ) => {
-
-            const srcset =
-                $(
-                    element
-                )
-                .attr(
-                    "srcset"
-                );
-
-
-            if (
-                srcset
-            ) {
-
-                $(
-                    element
-                )
-                .attr(
-                    "srcset",
-                    rewriteSrcset(
-                        srcset,
-                        pageUrl
-                    )
-                );
-            }
+        if (srcset) {
+            $(element).attr(
+                "srcset",
+                rewriteSrcset(srcset, pageUrl)
+            );
         }
-    );
+    });
 
+    $("style").each((_, element) => {
+        const css = $(element).html();
 
-    /* STYLE TAGS */
-
-    $(
-        "style"
-    )
-    .each(
-        (
-            index,
-            element
-        ) => {
-
-            const css =
-                $(
-                    element
-                )
-                .html();
-
-
-            if (
-                css
-            ) {
-
-                $(
-                    element
-                )
-                .html(
-                    rewriteCss(
-                        css,
-                        pageUrl
-                    )
-                );
-            }
+        if (css) {
+            $(element).html(
+                rewriteCss(css, pageUrl)
+            );
         }
-    );
+    });
 
+    $("[style]").each((_, element) => {
+        const css = $(element).attr("style");
 
-    /* INLINE STYLE */
-
-    $(
-        "[style]"
-    )
-    .each(
-        (
-            index,
-            element
-        ) => {
-
-            const css =
-                $(
-                    element
-                )
-                .attr(
-                    "style"
-                );
-
-
-            if (
-                css
-            ) {
-
-                $(
-                    element
-                )
-                .attr(
-                    "style",
-                    rewriteCss(
-                        css,
-                        pageUrl
-                    )
-                );
-            }
+        if (css) {
+            $(element).attr(
+                "style",
+                rewriteCss(css, pageUrl)
+            );
         }
-    );
+    });
 
+    // Prevent a target page from replacing the top-level Schoolio window.
+    $("a[target='_top'], a[target='_parent']")
+        .attr("target", "_self");
 
-    /* Prevent replacing Schoolio itself */
-
-    $(
-        "a[target='_top'], a[target='_parent']"
-    )
-    .attr(
-        "target",
-        "_self"
-    );
-
-
-    $(
-        "form[target='_top'], form[target='_parent']"
-    )
-    .attr(
-        "target",
-        "_self"
-    );
-
-
-    /* Remove meta refresh */
-
-    $(
-        'meta[http-equiv="refresh"]'
-    )
-    .remove();
-
+    $("form[target='_top'], form[target='_parent']")
+        .attr("target", "_self");
 
     return $.html();
 }
 
-
-/* =========================================================
-   ESCAPE HTML
-========================================================= */
-
-function escapeHtml(
-    value
-) {
-
-    return String(
-        value
-    )
-
-    .replace(
-        /&/g,
-        "&amp;"
-    )
-
-    .replace(
-        /</g,
-        "&lt;"
-    )
-
-    .replace(
-        />/g,
-        "&gt;"
-    )
-
-    .replace(
-        /"/g,
-        "&quot;"
-    )
-
-    .replace(
-        /'/g,
-        "&#039;"
-    );
-}
-
-
-/* =========================================================
-   HOME
-========================================================= */
-
-app.get(
-    "/",
-    (
-        req,
-        res
-    ) => {
-
-        res
-        .type(
-            "html"
-        )
-        .send(`
-<!DOCTYPE html>
-
+app.get("/", (req, res) => {
+    res.type("html").send(`<!doctype html>
 <html>
-
 <head>
-
-<meta charset="UTF-8">
-
-<meta
-name="viewport"
-content="width=device-width,initial-scale=1">
-
-<title>
-Schoolio Proxy
-</title>
-
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Schoolio Proxy</title>
 <style>
-
 body {
-
     margin: 0;
-
     padding: 50px;
-
-    font-family:
-        Arial,
-        sans-serif;
-
-    color:
-        #eeeeee;
-
-    background:
-        #070707;
+    font-family: Arial, sans-serif;
+    color: #eee;
+    background: #070707;
 }
 
 .box {
-
-    max-width:
-        680px;
-
-    margin:
-        auto;
-
-    padding:
-        30px;
-
-    border-radius:
-        16px;
-
-    background:
-        #0d0d0d;
-
-    border:
-        1px solid #222;
+    max-width: 680px;
+    margin: auto;
+    padding: 30px;
+    border-radius: 16px;
+    background: #0d0d0d;
+    border: 1px solid #222;
 }
 
 h1 {
-
-    color:
-        #ff263d;
+    color: #ff263d;
 }
 
 .online {
-
-    color:
-        #73d889;
+    color: #73d889;
 }
 
 code {
-
-    display:
-        block;
-
-    margin-top:
-        10px;
-
-    padding:
-        12px;
-
-    border-radius:
-        8px;
-
-    background:
-        #050505;
-
-    color:
-        #aaaaaa;
-
-    overflow-wrap:
-        anywhere;
+    display: block;
+    padding: 12px;
+    border-radius: 8px;
+    background: #050505;
+    color: #aaa;
+    overflow-wrap: anywhere;
 }
-
 </style>
-
 </head>
 
 <body>
-
 <div class="box">
+    <h1>Schoolio Proxy</h1>
 
-<h1>
-SCHOOLIO PROXY
-</h1>
+    <p class="online">
+        ● ONLINE
+    </p>
 
-<p class="online">
-● ONLINE
-</p>
+    <p>
+        Allowlist proxy backend is running.
+    </p>
 
-<p>
-Schoolio backend is running.
-</p>
-
-<p>
-Approved base domains:
-<strong>
-${ALLOWED_HOSTS.length}
-</strong>
-</p>
-
-<code>
-/api/test
-</code>
-
-<code>
-/api/allowed
-</code>
-
-<code>
-/api/check?url=https://www.roblox.com
-</code>
-
-<code>
-/proxy?url=https://petezahgames.github.io/games.html
-</code>
-
+    <code>
+        /proxy?url=https%3A%2F%2Fen.wikipedia.org
+    </code>
 </div>
-
 </body>
+</html>`);
+});
 
-</html>
-        `);
-    }
-);
+app.get("/api/test", (req, res) => {
+    res.json({
+        working: true,
+        message: "Schoolio connected successfully!",
+        version: "Schoolio Proxy 4.2",
+        allowedDomains: ALLOWED_HOSTS.length
+    });
+});
 
+app.get("/api/allowed", (req, res) => {
+    res.json({
+        count: ALLOWED_HOSTS.length,
+        domains: ALLOWED_HOSTS
+    });
+});
 
-/* =========================================================
-   API TEST
-========================================================= */
+app.get("/api/check", async (req, res) => {
+    const target = req.query.url;
 
-app.get(
-    "/api/test",
-    (
-        req,
-        res
-    ) => {
-
-        res.json({
-
-            working:
-                true,
-
-            message:
-                "Schoolio connected successfully!",
-
-            version:
-                "Schoolio Proxy 4.1",
-
-            allowedDomains:
-                ALLOWED_HOSTS.length
+    if (!target) {
+        return res.status(400).json({
+            allowed: false,
+            error: "Missing url"
         });
     }
-);
 
-
-/* =========================================================
-   API ALLOWED
-========================================================= */
-
-app.get(
-    "/api/allowed",
-    (
-        req,
-        res
-    ) => {
+    try {
+        const url = await validateUrl(target);
 
         res.json({
-
-            count:
-                ALLOWED_HOSTS.length,
-
-            domains:
-                ALLOWED_HOSTS
-                    .slice()
-                    .sort()
+            allowed: true,
+            url: url.href,
+            hostname: url.hostname
+        });
+    } catch (error) {
+        res.status(403).json({
+            allowed: false,
+            error: error.message
         });
     }
-);
+});
 
+app.get("/api/github", async (req, res) => {
+    try {
+        const response = await fetch(
+            "https://api.github.com/repos/microsoft/vscode",
+            {
+                headers: {
+                    "User-Agent": "Schoolio/2.0"
+                }
+            }
+        );
 
-/* =========================================================
-   API CHECK
-========================================================= */
+        const data = await response.json();
 
-app.get(
-    "/api/check",
-    async (
-        req,
-        res
-    ) => {
-
-        const target =
-            req.query.url;
-
-
-        if (
-            !target
-        ) {
-
-            return res
-                .status(
-                    400
-                )
-                .json({
-
-                    allowed:
-                        false,
-
-                    error:
-                        "Missing url."
-                });
-        }
-
-
-        try {
-
-            const url =
-                await validateUrl(
-                    target
-                );
-
-
-            return res.json({
-
-                allowed:
-                    true,
-
-                url:
-                    url.href,
-
-                hostname:
-                    url.hostname
-            });
-
-
-        } catch (
-            error
-        ) {
-
-            return res
-                .status(
-                    403
-                )
-                .json({
-
-                    allowed:
-                        false,
-
-                    error:
-                        error.message
-                });
-        }
+        res.json({
+            name: data.name,
+            stars: data.stargazers_count,
+            description: data.description,
+            url: data.html_url
+        });
+    } catch (error) {
+        res.status(500).json({
+            error: "Request failed",
+            details: error.message
+        });
     }
-);
+});
 
+app.get("/blocked", (req, res) => {
+    const attempted = String(
+        req.query.url || ""
+    );
 
-/* =========================================================
-   BLOCKED PAGE
-========================================================= */
-
-app.get(
-    "/blocked",
-    (
-        req,
-        res
-    ) => {
-
-        const attempted =
-            String(
-                req.query.url ||
-                ""
-            );
-
-
-        res
-        .status(
-            403
-        )
-        .type(
-            "html"
-        )
-        .send(`
-<!DOCTYPE html>
-
+    res.status(403)
+        .type("html")
+        .send(`<!doctype html>
 <html>
-
 <head>
-
-<meta charset="UTF-8">
-
-<title>
-Site Not Allowed
-</title>
+<meta charset="utf-8">
 
 <style>
-
 body {
-
-    margin: 0;
-
-    padding:
-        40px;
-
-    font-family:
-        Arial,
-        sans-serif;
-
-    background:
-        #070707;
-
-    color:
-        #dddddd;
+    font-family: Arial;
+    background: #070707;
+    color: #ddd;
+    padding: 40px;
 }
 
 h2 {
-
-    color:
-        #ff4458;
+    color: #ff4458;
 }
 
 code {
-
-    overflow-wrap:
-        anywhere;
-
-    color:
-        #aaaaaa;
+    color: #aaa;
+    overflow-wrap: anywhere;
 }
-
 </style>
-
 </head>
 
 <body>
-
 <h2>
-SITE NOT ALLOWED
+    Site not allowed
 </h2>
 
 <p>
-This destination is not in the Schoolio allowlist.
+    This destination is not in the Schoolio allowlist.
 </p>
 
 <code>
-${escapeHtml(attempted)}
+${attempted.replace(
+    /[&<>"']/g,
+    c =>
+        ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;"
+        })[c]
+)}
 </code>
-
 </body>
+</html>`);
+});
 
-</html>
-        `);
+app.all("/proxy", async (req, res) => {
+    const targetUrl = req.query.url;
+
+    if (!targetUrl) {
+        return res.status(400).json({
+            error: "Missing 'url' query parameter"
+        });
     }
-);
 
+    try {
+        const headers = {
+            "User-Agent":
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/153 Safari/537.36 Schoolio/2.0",
 
-/* =========================================================
-   PROXY
-========================================================= */
+            "Accept":
+                req.headers.accept ||
+                "text/html,application/xhtml+xml,application/json,text/plain,*/*",
 
-app.all(
-    "/proxy",
-    async (
-        req,
-        res
-    ) => {
+            "Accept-Language":
+                req.headers["accept-language"] ||
+                "en-US,en;q=0.9"
+        };
 
-        const targetUrl =
-            req.query.url;
-
+        const options = {
+            method: ["GET", "POST", "HEAD"].includes(req.method)
+                ? req.method
+                : "GET",
+            headers
+        };
 
         if (
-            !targetUrl
+            options.method === "POST" &&
+            req.body &&
+            Object.keys(req.body).length
         ) {
-
-            return res
-                .status(
-                    400
-                )
-                .json({
-
-                    error:
-                        "Missing url parameter."
-                });
-        }
-
-
-        try {
-
-            const headers = {
-
-                "User-Agent":
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/153 Safari/537.36 Schoolio/4.1",
-
-                "Accept":
-                    req.headers.accept
-                    ||
-                    "text/html,application/xhtml+xml,application/json,text/plain,image/avif,image/webp,*/*",
-
-                "Accept-Language":
-                    req.headers[
-                        "accept-language"
-                    ]
-                    ||
-                    "en-US,en;q=0.9"
-            };
-
-
-            const method =
-                [
-                    "GET",
-                    "POST",
-                    "HEAD"
-                ]
-                .includes(
-                    req.method
-                )
-                ?
-                req.method
-                :
-                "GET";
-
-
-            const options = {
-
-                method,
-
-                headers
-            };
-
-
-            if (
-                method ===
-                "POST"
-                &&
-                req.body
-                &&
-                Object.keys(
-                    req.body
-                )
-                .length
-            ) {
-
-                options.body =
-                    new URLSearchParams(
-                        req.body
-                    )
+            options.body =
+                new URLSearchParams(req.body)
                     .toString();
 
+            headers["Content-Type"] =
+                "application/x-www-form-urlencoded";
+        }
 
-                headers[
-                    "Content-Type"
-                ] =
-                    "application/x-www-form-urlencoded";
-            }
+        const {
+            response,
+            finalUrl
+        } = await safeFetch(
+            targetUrl,
+            options
+        );
 
-
-            const {
-
-                response,
-
-                finalUrl
-
-            } =
-                await safeFetch(
-                    targetUrl,
-                    options
-                );
-
-
-            const declaredLength =
-                Number(
-                    response
-                        .headers
-                        .get(
-                            "content-length"
-                        )
-                    ||
-                    0
-                );
-
-
-            if (
-                declaredLength >
-                MAX_RESPONSE_BYTES
-            ) {
-
-                return res
-                    .status(
-                        413
-                    )
-                    .send(
-                        "Response is too large."
-                    );
-            }
-
-
-            const contentType =
-                response
-                    .headers
-                    .get(
-                        "content-type"
-                    )
-                ||
-                "application/octet-stream";
-
-
-            const buffer =
-                await response
-                    .buffer();
-
-
-            if (
-                buffer.length >
-                MAX_RESPONSE_BYTES
-            ) {
-
-                return res
-                    .status(
-                        413
-                    )
-                    .send(
-                        "Response is too large."
-                    );
-            }
-
-
-            res.status(
-                response.status
+        const declaredLength =
+            Number(
+                response.headers.get("content-length") ||
+                0
             );
 
-
-            res.setHeader(
-                "X-Schoolio-Final-URL",
-                finalUrl.href
-            );
-
-
-            /*
-               HTML pages should not be cached.
-            */
-
-            if (
-                contentType.includes(
-                    "text/html"
-                )
-            ) {
-
-                const html =
-                    rewriteHtml(
-                        buffer
-                            .toString(
-                                "utf8"
-                            ),
-                        finalUrl.href
-                    );
-
-
-                res.setHeader(
-                    "Cache-Control",
-                    "no-store"
-                );
-
-
-                res.setHeader(
-                    "Content-Type",
-                    "text/html; charset=utf-8"
-                );
-
-
-                return res.send(
-                    html
-                );
-            }
-
-
-            /*
-               CSS
-            */
-
-            if (
-                contentType.includes(
-                    "text/css"
-                )
-            ) {
-
-                const css =
-                    rewriteCss(
-                        buffer
-                            .toString(
-                                "utf8"
-                            ),
-                        finalUrl.href
-                    );
-
-
-                res.setHeader(
-                    "Cache-Control",
-                    "public, max-age=300"
-                );
-
-
-                res.setHeader(
-                    "Content-Type",
-                    "text/css; charset=utf-8"
-                );
-
-
-                return res.send(
-                    css
-                );
-            }
-
-
-            /*
-               Images / fonts / other assets can
-               use a little browser caching.
-            */
-
-            if (
-                contentType.startsWith(
-                    "image/"
-                )
-                ||
-                contentType.includes(
-                    "font"
-                )
-            ) {
-
-                res.setHeader(
-                    "Cache-Control",
-                    "public, max-age=600"
-                );
-
-            } else {
-
-                res.setHeader(
-                    "Cache-Control",
-                    "public, max-age=120"
-                );
-            }
-
-
-            res.setHeader(
-                "Content-Type",
-                contentType
-            );
-
-
-            return res.send(
-                buffer
-            );
-
-
-        } catch (
-            error
+        if (
+            declaredLength >
+            MAX_RESPONSE_BYTES
         ) {
+            return res.status(413).send(
+                "Response is too large"
+            );
+        }
 
-            return res
-                .status(
-                    403
-                )
-                .type(
-                    "html"
-                )
-                .send(`
-<!DOCTYPE html>
+        const contentType =
+            response.headers.get("content-type") ||
+            "application/octet-stream";
 
+        const buffer =
+            Buffer.from(
+                await response.arrayBuffer()
+            );
+
+        if (
+            buffer.length >
+            MAX_RESPONSE_BYTES
+        ) {
+            return res.status(413).send(
+                "Response is too large"
+            );
+        }
+
+        res.status(response.status);
+
+        res.setHeader(
+            "Cache-Control",
+            "no-store"
+        );
+
+        res.setHeader(
+            "X-Schoolio-Final-URL",
+            finalUrl.href
+        );
+
+        if (
+            contentType.includes("text/html")
+        ) {
+            const rewritten =
+                rewriteHtml(
+                    buffer.toString("utf8"),
+                    finalUrl.href
+                );
+
+            res.type("html").send(
+                rewritten
+            );
+
+            return;
+        }
+
+        if (
+            contentType.includes("text/css")
+        ) {
+            const rewrittenCss =
+                rewriteCss(
+                    buffer.toString("utf8"),
+                    finalUrl.href
+                );
+
+            res.type("css").send(
+                rewrittenCss
+            );
+
+            return;
+        }
+
+        res.setHeader(
+            "Content-Type",
+            contentType
+        );
+
+        res.send(buffer);
+
+    } catch (error) {
+        res.status(403)
+            .type("html")
+            .send(`<!doctype html>
 <html>
-
 <head>
-
-<meta charset="UTF-8">
-
-<title>
-Schoolio Proxy Error
-</title>
+<meta charset="utf-8">
 
 <style>
-
 body {
-
-    margin: 0;
-
-    padding:
-        40px;
-
-    font-family:
-        Arial,
-        sans-serif;
-
-    background:
-        #070707;
-
-    color:
-        #dddddd;
+    font-family: Arial;
+    background: #070707;
+    color: #ddd;
+    padding: 40px;
 }
 
 h2 {
-
-    color:
-        #ff4458;
+    color: #ff4458;
 }
-
 </style>
-
 </head>
 
 <body>
-
 <h2>
-Schoolio Proxy Error
+    Schoolio Proxy Error
 </h2>
 
 <p>
-${escapeHtml(error.message)}
+${String(error.message).replace(
+    /[&<>"']/g,
+    c =>
+        ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;"
+        })[c]
+)}
 </p>
-
 </body>
-
-</html>
-                `);
-        }
+</html>`);
     }
-);
+});
 
-
-/* =========================================================
-   404
-========================================================= */
-
-app.use(
-    (
-        req,
-        res
-    ) => {
-
-        res
-            .status(
-                404
-            )
-            .json({
-
-                error:
-                    "Schoolio route not found."
-            });
-    }
-);
-
-
-/* =========================================================
-   START SERVER
-========================================================= */
+app.use((req, res) => {
+    res.status(404).json({
+        error: "Schoolio route not found"
+    });
+});
 
 app.listen(
     PORT,
     "0.0.0.0",
     () => {
-
         console.log(
-            "======================================"
+            `Schoolio Proxy 4.2 running on port ${PORT}`
         );
 
         console.log(
-            "SCHOOLIO PROXY 4.1"
-        );
-
-        console.log(
-            "Port: " +
-            PORT
-        );
-
-        console.log(
-            "Allowed base domains: " +
-            ALLOWED_HOSTS.length
-        );
-
-        console.log(
-            "======================================"
+            `Allowed domains: ${ALLOWED_HOSTS.length}`
         );
     }
 );
