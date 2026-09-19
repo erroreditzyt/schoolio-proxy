@@ -3,7 +3,6 @@ const fetch = require("node-fetch");
 const cheerio = require("cheerio");
 const dns = require("dns").promises;
 const net = require("net");
-const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,14 +14,7 @@ const PORT = process.env.PORT || 3000;
 app.disable("x-powered-by");
 
 app.use(express.json({ limit: "1mb" }));
-
-app.use(
-    express.urlencoded({
-        extended: true,
-        limit: "1mb"
-    })
-);
-
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 /* =========================================================
    CORS
@@ -39,122 +31,49 @@ app.use((req, res, next) => {
     next();
 });
 
-
 /* =========================================================
    ALLOW ALL WEBSITES MODE
-   Set ALLOW_ALL_WEBSITES=true in Render environment variables
-   or change the default below to true
+   Set ALLOW_ALL_WEBSITES=false in env vars to restrict
 ========================================================= */
 
 const ALLOW_ALL_WEBSITES = process.env.ALLOW_ALL_WEBSITES !== "false";
 
 const DEFAULT_ALLOWED_HOSTS = [
-    "example.com",
-    "petezahgames.com",
-    "github.com",
-    "api.github.com",
-    "docs.github.com",
-    "githubusercontent.com",
-    "raw.githubusercontent.com",
-    "githubassets.com",
-    "stackoverflow.com",
-    "stackexchange.com",
-    "codepen.io",
-    "jsfiddle.net",
-    "replit.com",
-    "npmjs.com",
-    "nodejs.org",
-    "python.org",
-    "pypi.org",
-    "java.com",
-    "oracle.com",
-    "developer.mozilla.org",
-    "mozilla.org",
-    "mozilla.net",
-    "w3.org",
-    "w3schools.com",
-    "render.com",
-    "vercel.com",
-    "netlify.com",
-    "railway.app",
-    "cloudflare.com",
-    "jsdelivr.net",
-    "cdnjs.com",
-    "unpkg.com",
-    "wikipedia.org",
-    "wikimedia.org",
-    "wiktionary.org",
-    "britannica.com",
-    "merriam-webster.com",
-    "dictionary.com",
-    "thesaurus.com",
-    "archive.org",
-    "gutenberg.org",
-    "microsoft.com",
-    "learn.microsoft.com",
-    "support.microsoft.com",
-    "office.com",
-    "google.com",
-    "googleapis.com",
-    "gstatic.com",
-    "googleusercontent.com",
-    "fonts.googleapis.com",
-    "fonts.gstatic.com",
-    "scholar.google.com",
-    "books.google.com",
-    "translate.google.com",
-    "khanacademy.org",
-    "kastatic.org",
-    "kasandbox.org",
-    "quizlet.com",
-    "desmos.com",
-    "geogebra.org",
-    "wolframalpha.com",
-    "nasa.gov",
-    "noaa.gov",
-    "usgs.gov",
-    "nih.gov",
-    "cdc.gov",
-    "who.int",
-    "weather.gov",
-    "census.gov",
-    "data.gov",
-    "loc.gov",
-    "sec.gov",
-    "irs.gov",
-    "federalreserve.gov",
-    "stlouisfed.org",
-    "bea.gov",
-    "bls.gov",
-    "finra.org",
-    "investopedia.com",
-    "nasdaq.com",
-    "nyse.com",
-    "finance.yahoo.com",
-    "reuters.com",
-    "apnews.com",
-    "bbc.com",
-    "npr.org",
-    "imdb.com",
-    "rottentomatoes.com",
-    "goodreads.com",
-    "medium.com",
-    "substack.com",
-    "canva.com",
-    "figma.com",
-    "notion.so"
+    "example.com", "petezahgames.com", "github.com", "api.github.com",
+    "docs.github.com", "githubusercontent.com", "raw.githubusercontent.com",
+    "githubassets.com", "stackoverflow.com", "stackexchange.com",
+    "codepen.io", "jsfiddle.net", "replit.com", "npmjs.com", "nodejs.org",
+    "python.org", "pypi.org", "java.com", "oracle.com",
+    "developer.mozilla.org", "mozilla.org", "mozilla.net", "w3.org",
+    "w3schools.com", "render.com", "vercel.com", "netlify.com",
+    "railway.app", "cloudflare.com", "jsdelivr.net", "cdnjs.com",
+    "unpkg.com", "wikipedia.org", "wikimedia.org", "wiktionary.org",
+    "britannica.com", "merriam-webster.com", "dictionary.com",
+    "thesaurus.com", "archive.org", "gutenberg.org", "microsoft.com",
+    "learn.microsoft.com", "support.microsoft.com", "office.com",
+    "google.com", "googleapis.com", "gstatic.com", "googleusercontent.com",
+    "fonts.googleapis.com", "fonts.gstatic.com", "scholar.google.com",
+    "books.google.com", "translate.google.com", "khanacademy.org",
+    "kastatic.org", "kasandbox.org", "quizlet.com", "desmos.com",
+    "geogebra.org", "wolframalpha.com", "nasa.gov", "noaa.gov",
+    "usgs.gov", "nih.gov", "cdc.gov", "who.int", "weather.gov",
+    "census.gov", "data.gov", "loc.gov", "sec.gov", "irs.gov",
+    "federalreserve.gov", "stlouisfed.org", "bea.gov", "bls.gov",
+    "finra.org", "investopedia.com", "nasdaq.com", "nyse.com",
+    "finance.yahoo.com", "reuters.com", "apnews.com", "bbc.com",
+    "npr.org", "imdb.com", "rottentomatoes.com", "goodreads.com",
+    "medium.com", "substack.com", "canva.com", "figma.com", "notion.so"
 ];
 
 const EXTRA_ALLOWED_HOSTS =
     String(process.env.EXTRA_ALLOWED_HOSTS || "")
     .split(",")
-    .map(domain => domain.trim().toLowerCase())
+    .map(d => d.trim().toLowerCase())
     .filter(Boolean);
 
 const ALLOWED_HOSTS = Array.from(
     new Set([...DEFAULT_ALLOWED_HOSTS, ...EXTRA_ALLOWED_HOSTS])
 );
-
 
 /* =========================================================
    DOMAIN CHECK
@@ -165,9 +84,7 @@ function cleanHostname(hostname) {
 }
 
 function isAllowedHost(hostname) {
-    if (ALLOW_ALL_WEBSITES) {
-        return true;
-    }
+    if (ALLOW_ALL_WEBSITES) return true;
     
     const host = cleanHostname(hostname);
     return ALLOWED_HOSTS.some(domain => {
@@ -176,7 +93,6 @@ function isAllowedHost(hostname) {
     });
 }
 
-
 /* =========================================================
    PRIVATE NETWORK PROTECTION
 ========================================================= */
@@ -184,17 +100,14 @@ function isAllowedHost(hostname) {
 function isPrivateIPv4(ip) {
     const parts = ip.split(".").map(Number);
     
-    if (parts.length !== 4 || parts.some(value => !Number.isInteger(value) || value < 0 || value > 255)) {
+    if (parts.length !== 4 || parts.some(v => !Number.isInteger(v) || v < 0 || v > 255)) {
         return true;
     }
     
-    const a = parts[0];
-    const b = parts[1];
+    const [a, b] = parts;
     
     return (
-        a === 0 ||
-        a === 10 ||
-        a === 127 ||
+        a === 0 || a === 10 || a === 127 ||
         (a === 169 && b === 254) ||
         (a === 172 && b >= 16 && b <= 31) ||
         (a === 192 && b === 168) ||
@@ -203,14 +116,9 @@ function isPrivateIPv4(ip) {
 }
 
 function isPrivateIPv6(ip) {
-    const value = String(ip).toLowerCase();
-    return (
-        value === "::" ||
-        value === "::1" ||
-        value.startsWith("fc") ||
-        value.startsWith("fd") ||
-        value.startsWith("fe80:")
-    );
+    const v = String(ip).toLowerCase();
+    return v === "::" || v === "::1" || v.startsWith("fc") || 
+           v.startsWith("fd") || v.startsWith("fe80:");
 }
 
 function isPrivateIP(ip) {
@@ -218,7 +126,6 @@ function isPrivateIP(ip) {
     if (net.isIPv6(ip)) return isPrivateIPv6(ip);
     return true;
 }
-
 
 /* =========================================================
    VALIDATE URL
@@ -265,7 +172,6 @@ async function validateUrl(input) {
     return url;
 }
 
-
 /* =========================================================
    FETCH WITH REDIRECT VALIDATION
 ========================================================= */
@@ -301,99 +207,58 @@ async function safeFetch(input, redirectCount = 0) {
     return { response, finalUrl: url.href };
 }
 
-
 /* =========================================================
-   CREATE PROXY URL
+   URL REWRITING
 ========================================================= */
 
 function createProxyUrl(url) {
     return "/proxy?url=" + encodeURIComponent(url);
 }
 
-
-/* =========================================================
-   URL SKIP CHECK
-========================================================= */
-
 function shouldSkipUrl(value) {
     if (!value) return true;
-    
     const lower = String(value).trim().toLowerCase();
-    
-    return (
-        lower.startsWith("#") ||
-        lower.startsWith("data:") ||
-        lower.startsWith("javascript:") ||
-        lower.startsWith("mailto:") ||
-        lower.startsWith("tel:") ||
-        lower.startsWith("blob:") ||
-        lower.startsWith("about:")
-    );
+    return ["#", "data:", "javascript:", "mailto:", "tel:", "blob:", "about:"]
+        .some(prefix => lower.startsWith(prefix));
 }
 
-
-/* =========================================================
-   REWRITE ONE HTML ATTRIBUTE
-========================================================= */
-
 function rewriteAttribute($, selector, attribute, pageUrl) {
-    $(selector).each((index, element) => {
+    $(selector).each((_, element) => {
         const original = $(element).attr(attribute);
-        
         if (shouldSkipUrl(original)) return;
         
         try {
             const absolute = new URL(original, pageUrl);
-            
-            if (absolute.protocol !== "http:" && absolute.protocol !== "https:") {
-                return;
-            }
-            
+            if (absolute.protocol !== "http:" && absolute.protocol !== "https:") return;
             $(element).attr(attribute, createProxyUrl(absolute.href));
-        } catch {
-            // Ignore malformed URLs
-        }
+        } catch {}
     });
 }
 
-
-/* =========================================================
-   REWRITE SRCSET
-========================================================= */
-
 function rewriteSrcset($, pageUrl) {
-    $("[srcset]").each((index, element) => {
+    $("[srcset]").each((_, element) => {
         const srcset = $(element).attr("srcset");
-        
         if (!srcset) return;
         
-        const rewritten = srcset
-            .split(",")
-            .map(item => {
-                const parts = item.trim().split(/\s+/);
-                const value = parts.shift();
-                const descriptor = parts.join(" ");
-                
-                if (shouldSkipUrl(value)) return item;
-                
-                try {
-                    const absolute = new URL(value, pageUrl);
-                    const proxied = createProxyUrl(absolute.href);
-                    return proxied + (descriptor ? " " + descriptor : "");
-                } catch {
-                    return item;
-                }
-            })
-            .join(", ");
+        const rewritten = srcset.split(",").map(item => {
+            const parts = item.trim().split(/\s+/);
+            const value = parts.shift();
+            const descriptor = parts.join(" ");
+            
+            if (shouldSkipUrl(value)) return item;
+            
+            try {
+                const absolute = new URL(value, pageUrl);
+                const proxied = createProxyUrl(absolute.href);
+                return proxied + (descriptor ? " " + descriptor : "");
+            } catch {
+                return item;
+            }
+        }).join(", ");
         
         $(element).attr("srcset", rewritten);
     });
 }
-
-
-/* =========================================================
-   REWRITE INLINE CSS URL(...)
-========================================================= */
 
 function rewriteCSS(css, pageUrl) {
     return String(css).replace(
@@ -403,11 +268,7 @@ function rewriteCSS(css, pageUrl) {
             
             try {
                 const absolute = new URL(value, pageUrl);
-                
-                if (absolute.protocol !== "http:" && absolute.protocol !== "https:") {
-                    return whole;
-                }
-                
+                if (absolute.protocol !== "http:" && absolute.protocol !== "https:") return whole;
                 return 'url("' + createProxyUrl(absolute.href) + '")';
             } catch {
                 return whole;
@@ -415,11 +276,6 @@ function rewriteCSS(css, pageUrl) {
         }
     );
 }
-
-
-/* =========================================================
-   REWRITE HTML
-========================================================= */
 
 function rewriteHTML(html, pageUrl) {
     const $ = cheerio.load(html, { decodeEntities: false });
@@ -437,36 +293,27 @@ function rewriteHTML(html, pageUrl) {
     
     rewriteSrcset($, pageUrl);
     
-    // Rewrite inline style URLs
-    $("[style]").each((index, element) => {
+    $("[style]").each((_, element) => {
         const style = $(element).attr("style");
         if (!style) return;
-        
         $(element).attr("style", rewriteCSS(style, pageUrl));
     });
     
-    // Rewrite <style> blocks
-    $("style").each((index, element) => {
+    $("style").each((_, element) => {
         const css = $(element).html();
         if (!css) return;
-        
         $(element).html(rewriteCSS(css, pageUrl));
     });
     
-    // Prevent automatic redirects
     $('meta[http-equiv="refresh"]').remove();
-    
-    // Remove <base> because it can interfere with Schoolio's rewritten URLs
     $("base").remove();
-    
     $("head").prepend('<meta name="schoolio-proxy" content="enabled">');
     
     return $.html();
 }
 
-
 /* =========================================================
-   ESCAPE HTML
+   ERROR PAGE
 ========================================================= */
 
 function escapeHtml(value) {
@@ -478,14 +325,8 @@ function escapeHtml(value) {
         .replace(/'/g, "&#039;");
 }
 
-
-/* =========================================================
-   ERROR PAGE
-========================================================= */
-
 function proxyErrorPage(title, message) {
-    return `
-<!DOCTYPE html>
+    return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -533,26 +374,46 @@ p { margin: 0; color: #77777e; line-height: 1.6; font-size: 13px; }
 <p>${escapeHtml(message)}</p>
 </div>
 </body>
-</html>
-    `;
+</html>`;
 }
 
-
 /* =========================================================
-   SERVE FRONTEND
+   ROUTES
 ========================================================= */
 
-app.use(express.static(path.join(__dirname, "public")));
-
+// Status page
 app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "index.html"));
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schoolio Proxy</title>
+<style>
+body { margin: 0; padding: 40px; font-family: Arial, sans-serif; color: #eeeeee; background: #050505; }
+.card { max-width: 650px; margin: 40px auto; padding: 30px; border-radius: 16px; background: #0d0d0d; border: 1px solid #222; }
+h1 { color: #ff263d; }
+.online { color: #67dd7d; }
+code { display: block; padding: 12px; margin-top: 10px; border-radius: 8px; color: #aaa; background: #050505; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<div class="card">
+<h1>SCHOOLIO PROXY</h1>
+<p class="online">● ONLINE</p>
+<p>Backend connected.</p>
+<p>Mode: <strong>${ALLOW_ALL_WEBSITES ? "UNRESTRICTED (Any Website)" : "RESTRICTED (Allowlist Only)"}</strong></p>
+<p>Allowed domains: <strong>${ALLOWED_HOSTS.length}</strong></p>
+<code>/api/test</code>
+<code>/api/allowed</code>
+<code>/api/check?url=https://en.wikipedia.org</code>
+<code>/proxy?url=https://en.wikipedia.org</code>
+</div>
+</body>
+</html>`);
 });
 
-
-/* =========================================================
-   API TEST
-========================================================= */
-
+// API endpoints
 app.get("/api/test", (req, res) => {
     res.json({
         working: true,
@@ -563,42 +424,20 @@ app.get("/api/test", (req, res) => {
     });
 });
 
-
-/* =========================================================
-   API CHECK
-========================================================= */
-
 app.get("/api/check", async (req, res) => {
     const target = req.query.url;
     
     if (!target) {
-        return res.status(400).json({
-            allowed: false,
-            error: "Missing url parameter."
-        });
+        return res.status(400).json({ allowed: false, error: "Missing url parameter." });
     }
     
     try {
         const url = await validateUrl(target);
-        
-        return res.json({
-            allowed: true,
-            hostname: url.hostname,
-            url: url.href
-        });
-        
+        return res.json({ allowed: true, hostname: url.hostname, url: url.href });
     } catch(error) {
-        return res.status(403).json({
-            allowed: false,
-            error: error.message
-        });
+        return res.status(403).json({ allowed: false, error: error.message });
     }
 });
-
-
-/* =========================================================
-   API ALLOWED
-========================================================= */
 
 app.get("/api/allowed", (req, res) => {
     res.json({
@@ -608,11 +447,7 @@ app.get("/api/allowed", (req, res) => {
     });
 });
 
-
-/* =========================================================
-   WEBSITE PROXY
-========================================================= */
-
+// Main proxy endpoint
 app.get("/proxy", async (req, res) => {
     const target = req.query.url;
     
@@ -627,7 +462,6 @@ app.get("/proxy", async (req, res) => {
         
         const contentType = response.headers.get("content-type") || "application/octet-stream";
         const contentLength = Number(response.headers.get("content-length") || 0);
-        
         const MAX_SIZE = 15 * 1024 * 1024;
         
         if (contentLength > MAX_SIZE) {
@@ -695,23 +529,15 @@ app.get("/proxy", async (req, res) => {
         const notAllowed = message.includes("allowlist");
         
         return res.status(notAllowed ? 403 : 502).type("html").send(
-            proxyErrorPage(
-                notAllowed ? "SITE NOT ALLOWED" : "PROXY ERROR",
-                message
-            )
+            proxyErrorPage(notAllowed ? "SITE NOT ALLOWED" : "PROXY ERROR", message)
         );
     }
 });
 
-
-/* =========================================================
-   404
-========================================================= */
-
+// 404 handler
 app.use((req, res) => {
     res.status(404).json({ error: "Schoolio route not found." });
 });
-
 
 /* =========================================================
    START
