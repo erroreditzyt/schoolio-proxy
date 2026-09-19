@@ -54,19 +54,14 @@ app.use((req, res, next) => {
 
 /* =========================================================
    ALLOWED WEBSITES
-
-   Add new approved domains here.
-
-   Example:
-
-   "example.com",
-
-   Adding example.com automatically allows:
-
-   www.example.com
-   docs.example.com
-   cdn.example.com
+   
+   NOTE: Set ALLOW_ALL_WEBSITES=true in environment variables
+   to bypass the allowlist and allow any website.
+   
+   Or keep it false to use the restricted list.
 ========================================================= */
+
+const ALLOW_ALL_WEBSITES = process.env.ALLOW_ALL_WEBSITES === "true" || true; // SET TO true TO ALLOW ALL
 
 const DEFAULT_ALLOWED_HOSTS = [
 
@@ -249,16 +244,6 @@ const DEFAULT_ALLOWED_HOSTS = [
 
 /* =========================================================
    OPTIONAL RENDER EXTRA DOMAINS
-
-   You can create a Render environment variable:
-
-   EXTRA_ALLOWED_HOSTS
-
-   Value example:
-
-   site1.com,site2.com,site3.com
-
-   This lets you add approved domains without editing code.
 ========================================================= */
 
 const EXTRA_ALLOWED_HOSTS =
@@ -298,6 +283,11 @@ function cleanHostname(hostname) {
 
 
 function isAllowedHost(hostname) {
+
+    // IF ALLOW_ALL_WEBSITES IS TRUE, ALLOW ANY HOST
+    if (ALLOW_ALL_WEBSITES) {
+        return true;
+    }
 
     const host =
         cleanHostname(
@@ -468,6 +458,7 @@ async function validateUrl(input) {
     }
 
 
+    // CHECK ALLOWLIST (BYPASSED IF ALLOW_ALL_WEBSITES IS TRUE)
     if (
         !isAllowedHost(
             url.hostname
@@ -1439,6 +1430,10 @@ Backend connected.
 </p>
 
 <p>
+Mode: <strong>${ALLOW_ALL_WEBSITES ? "UNRESTRICTED (Any Website)" : "RESTRICTED (Allowlist Only)"}</strong>
+</p>
+
+<p>
 Allowed domains:
 <strong>
 ${ALLOWED_HOSTS.length}
@@ -1489,6 +1484,9 @@ app.get(
 
             message:
                 "Schoolio connected successfully!",
+
+            mode:
+                ALLOW_ALL_WEBSITES ? "unrestricted" : "restricted",
 
             allowedDomains:
                 ALLOWED_HOSTS.length
@@ -1571,6 +1569,9 @@ app.get(
     (req, res) => {
 
         res.json({
+
+            mode:
+                ALLOW_ALL_WEBSITES ? "unrestricted" : "restricted",
 
             count:
                 ALLOWED_HOSTS.length,
@@ -1989,6 +1990,11 @@ app.listen(
         console.log(
             "Port: " +
             PORT
+        );
+
+        console.log(
+            "Mode: " +
+            (ALLOW_ALL_WEBSITES ? "UNRESTRICTED" : "RESTRICTED")
         );
 
         console.log(
