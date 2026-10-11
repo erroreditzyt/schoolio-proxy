@@ -1,9 +1,8 @@
 {
   "name": "schoolio-proxy",
-  "version": "3.0.0",
-  "description": "Schoolio approved website proxy",
+  "version": "2.1.0",
+  "private": true,
   "main": "server.js",
-  "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
@@ -11,8 +10,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "cheerio": "^1.0.0",
-    "express": "^5.1.0",
-    "node-fetch": "^2.7.0"
+    "cheerio": "^1.1.2",
+    "express": "^5.1.0"
   }
 }
