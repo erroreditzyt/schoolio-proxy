@@ -9,7 +9,7 @@ const cheerio = require("cheerio");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
-const VERSION = "Schoolio Proxy 5.1";
+const VERSION = "Schoolio Proxy 5.2";
 
 // Raw request bodies are preserved for proxied POST/PUT/PATCH requests.
 app.use("/proxy", express.raw({
@@ -83,6 +83,10 @@ const DEFAULT_ALLOWED_HOSTS = [
     "wolframalpha.com",
     "quizizz.com",
     "wayground.com",
+    "huggingface.co",
+    "hf.co",
+    "duck.ai",
+    "duckduckgo.com",
     "microsoft.com",
     "learn.microsoft.com",
     "support.microsoft.com",
