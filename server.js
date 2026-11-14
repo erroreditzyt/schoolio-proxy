@@ -9,7 +9,7 @@ const cheerio = require("cheerio");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
-const VERSION = "Schoolio Proxy 5.2";
+const VERSION = "Schoolio Proxy 5.3";
 
 // Raw request bodies are preserved for proxied POST/PUT/PATCH requests.
 app.use("/proxy", express.raw({
@@ -1006,6 +1006,177 @@ app.get("/api/sites/search", (req, res) => {
         total: items.length,
         items
     });
+});
+
+
+/* =========================================================
+SCHOOLIO NATIVE AI
+Uses Hugging Face Inference Providers from the server so the
+browser never receives the private HF token.
+========================================================= */
+const HF_TOKEN = String(process.env.HF_TOKEN || "").trim();
+const AI_MODEL = String(
+    process.env.AI_MODEL || "openai/gpt-oss-20b"
+).trim();
+
+const AI_SYSTEM_PROMPTS = {
+    assistant:
+        "You are Schoolio Assistant. Be helpful, clear, concise, and good at explaining schoolwork, coding, research, and everyday questions. Do not claim to have done things you did not do.",
+    normal:
+        "You are a general-purpose AI assistant. Answer directly and naturally. Be accurate, useful, and concise unless the user asks for detail."
+};
+
+app.get("/api/ai/status", (req, res) => {
+    res.json({
+        configured: Boolean(HF_TOKEN),
+        model: AI_MODEL,
+        provider: "Hugging Face Inference Providers",
+        endpoint: "/api/ai"
+    });
+});
+
+app.post("/api/ai", async (req, res) => {
+    if (!HF_TOKEN) {
+        return res.status(503).json({
+            error: "AI is not configured on Render.",
+            setup: "Add an HF_TOKEN environment variable in Render, then redeploy.",
+            model: AI_MODEL
+        });
+    }
+
+    const mode = req.body && req.body.mode === "normal"
+        ? "normal"
+        : "assistant";
+
+    const incoming = Array.isArray(req.body && req.body.messages)
+        ? req.body.messages
+        : [];
+
+    const messages = incoming
+        .slice(-20)
+        .map(item => ({
+            role: item && item.role === "assistant" ? "assistant" : "user",
+            content: String(item && item.content || "").slice(0, 6000)
+        }))
+        .filter(item => item.content.trim());
+
+    if (!messages.length) {
+        return res.status(400).json({
+            error: "No message was provided."
+        });
+    }
+
+    const totalChars = messages.reduce(
+        (sum, item) => sum + item.content.length,
+        0
+    );
+
+    if (totalChars > 24000) {
+        return res.status(413).json({
+            error: "Conversation is too long. Clear the chat and try again."
+        });
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+
+    try {
+        const response = await fetch(
+            "https://router.huggingface.co/v1/chat/completions",
+            {
+                method: "POST",
+                headers: {
+                    "Authorization": "Bearer " + HF_TOKEN,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    model: AI_MODEL,
+                    messages: [
+                        {
+                            role: "system",
+                            content: AI_SYSTEM_PROMPTS[mode]
+                        },
+                        ...messages
+                    ],
+                    max_tokens: 700,
+                    temperature: mode === "assistant" ? 0.55 : 0.75,
+                    stream: false
+                }),
+                signal: controller.signal
+            }
+        );
+
+        const raw = await response.text();
+        let data = null;
+
+        try {
+            data = JSON.parse(raw);
+        } catch {}
+
+        if (!response.ok) {
+            const providerMessage =
+                data &&
+                (
+                    data.error?.message ||
+                    data.error ||
+                    data.message
+                );
+
+            return res.status(response.status).json({
+                error:
+                    typeof providerMessage === "string"
+                        ? providerMessage
+                        : "The AI provider returned an error.",
+                model: AI_MODEL
+            });
+        }
+
+        const content =
+            data &&
+            data.choices &&
+            data.choices[0] &&
+            data.choices[0].message &&
+            data.choices[0].message.content;
+
+        let answer = "";
+
+        if (typeof content === "string") {
+            answer = content;
+        } else if (Array.isArray(content)) {
+            answer = content
+                .map(part => (
+                    typeof part === "string"
+                        ? part
+                        : String(part && (part.text || part.content) || "")
+                ))
+                .join("");
+        }
+
+        answer = answer.trim();
+
+        if (!answer) {
+            return res.status(502).json({
+                error: "The model returned an empty response.",
+                model: AI_MODEL
+            });
+        }
+
+        res.json({
+            answer,
+            model: AI_MODEL,
+            mode
+        });
+    } catch (error) {
+        res.status(error && error.name === "AbortError" ? 504 : 502).json({
+            error:
+                error && error.name === "AbortError"
+                    ? "The AI request timed out."
+                    : "Could not reach the AI provider.",
+            model: AI_MODEL
+        });
+    } finally {
+        clearTimeout(timeout);
+    }
 });
 
 app.get("/api/check", async (req, res) => {

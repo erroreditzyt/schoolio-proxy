@@ -1,0 +1,1 @@
+Add these in Render > your service > Environment:\n\nHF_TOKEN=hf_your_hugging_face_token_here\nAI_MODEL=openai/gpt-oss-20b\n\nAI_MODEL is optional; the server defaults to openai/gpt-oss-20b.\nKeep HF_TOKEN secret and do not put it in schoolio.html or GitHub.\n
