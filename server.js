@@ -9,7 +9,7 @@ const cheerio = require("cheerio");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
-const VERSION = "Schoolio Proxy 5.3";
+const VERSION = "Schoolio Proxy 5.4";
 
 // Raw request bodies are preserved for proxied POST/PUT/PATCH requests.
 app.use("/proxy", express.raw({
@@ -1010,11 +1010,10 @@ app.get("/api/sites/search", (req, res) => {
 
 
 /* =========================================================
-SCHOOLIO NATIVE AI
-Uses Hugging Face Inference Providers from the server so the
-browser never receives the private HF token.
+SCHOOLIO NATIVE AI - GROQ
+The private Groq API key stays on Render.
 ========================================================= */
-const HF_TOKEN = String(process.env.HF_TOKEN || "").trim();
+const GROQ_API_KEY = String(process.env.GROQ_API_KEY || "").trim();
 const AI_MODEL = String(
     process.env.AI_MODEL || "openai/gpt-oss-20b"
 ).trim();
@@ -1028,35 +1027,42 @@ const AI_SYSTEM_PROMPTS = {
 
 app.get("/api/ai/status", (req, res) => {
     res.json({
-        configured: Boolean(HF_TOKEN),
+        configured: Boolean(GROQ_API_KEY),
         model: AI_MODEL,
-        provider: "Hugging Face Inference Providers",
+        provider: "Groq",
         endpoint: "/api/ai"
     });
 });
 
 app.post("/api/ai", async (req, res) => {
-    if (!HF_TOKEN) {
+    if (!GROQ_API_KEY) {
         return res.status(503).json({
             error: "AI is not configured on Render.",
-            setup: "Add an HF_TOKEN environment variable in Render, then redeploy.",
+            setup: "Add GROQ_API_KEY in Render Environment, then redeploy.",
             model: AI_MODEL
         });
     }
 
-    const mode = req.body && req.body.mode === "normal"
-        ? "normal"
-        : "assistant";
+    const mode =
+        req.body && req.body.mode === "normal"
+            ? "normal"
+            : "assistant";
 
-    const incoming = Array.isArray(req.body && req.body.messages)
-        ? req.body.messages
-        : [];
+    const incoming =
+        Array.isArray(req.body && req.body.messages)
+            ? req.body.messages
+            : [];
 
     const messages = incoming
         .slice(-20)
         .map(item => ({
-            role: item && item.role === "assistant" ? "assistant" : "user",
-            content: String(item && item.content || "").slice(0, 6000)
+            role:
+                item && item.role === "assistant"
+                    ? "assistant"
+                    : "user",
+            content:
+                String(item && item.content || "")
+                    .slice(0, 6000)
         }))
         .filter(item => item.content.trim());
 
@@ -1073,33 +1079,41 @@ app.post("/api/ai", async (req, res) => {
 
     if (totalChars > 24000) {
         return res.status(413).json({
-            error: "Conversation is too long. Clear the chat and try again."
+            error:
+                "Conversation is too long. Clear the chat and try again."
         });
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout =
+        setTimeout(() => controller.abort(), 60000);
 
     try {
         const response = await fetch(
-            "https://router.huggingface.co/v1/chat/completions",
+            "https://api.groq.com/openai/v1/chat/completions",
             {
                 method: "POST",
                 headers: {
-                    "Authorization": "Bearer " + HF_TOKEN,
-                    "Content-Type": "application/json"
+                    "Authorization":
+                        "Bearer " + GROQ_API_KEY,
+                    "Content-Type":
+                        "application/json"
                 },
                 body: JSON.stringify({
                     model: AI_MODEL,
                     messages: [
                         {
                             role: "system",
-                            content: AI_SYSTEM_PROMPTS[mode]
+                            content:
+                                AI_SYSTEM_PROMPTS[mode]
                         },
                         ...messages
                     ],
                     max_tokens: 700,
-                    temperature: mode === "assistant" ? 0.55 : 0.75,
+                    temperature:
+                        mode === "assistant"
+                            ? 0.55
+                            : 0.75,
                     stream: false
                 }),
                 signal: controller.signal
@@ -1122,13 +1136,15 @@ app.post("/api/ai", async (req, res) => {
                     data.message
                 );
 
-            return res.status(response.status).json({
-                error:
-                    typeof providerMessage === "string"
-                        ? providerMessage
-                        : "The AI provider returned an error.",
-                model: AI_MODEL
-            });
+            return res
+                .status(response.status)
+                .json({
+                    error:
+                        typeof providerMessage === "string"
+                            ? providerMessage
+                            : "Groq returned an error.",
+                    model: AI_MODEL
+                });
         }
 
         const content =
@@ -1138,25 +1154,13 @@ app.post("/api/ai", async (req, res) => {
             data.choices[0].message &&
             data.choices[0].message.content;
 
-        let answer = "";
-
-        if (typeof content === "string") {
-            answer = content;
-        } else if (Array.isArray(content)) {
-            answer = content
-                .map(part => (
-                    typeof part === "string"
-                        ? part
-                        : String(part && (part.text || part.content) || "")
-                ))
-                .join("");
-        }
-
-        answer = answer.trim();
+        const answer =
+            String(content || "").trim();
 
         if (!answer) {
             return res.status(502).json({
-                error: "The model returned an empty response.",
+                error:
+                    "The model returned an empty response.",
                 model: AI_MODEL
             });
         }
@@ -1164,14 +1168,19 @@ app.post("/api/ai", async (req, res) => {
         res.json({
             answer,
             model: AI_MODEL,
-            mode
+            mode,
+            provider: "Groq"
         });
     } catch (error) {
-        res.status(error && error.name === "AbortError" ? 504 : 502).json({
+        res.status(
+            error && error.name === "AbortError"
+                ? 504
+                : 502
+        ).json({
             error:
                 error && error.name === "AbortError"
                     ? "The AI request timed out."
-                    : "Could not reach the AI provider.",
+                    : "Could not reach Groq.",
             model: AI_MODEL
         });
     } finally {
