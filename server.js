@@ -9,7 +9,7 @@ const cheerio = require("cheerio");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
-const VERSION = "Schoolio Proxy 5.7";
+const VERSION = "Schoolio Proxy 5.8";
 
 // Raw request bodies are preserved for proxied POST/PUT/PATCH requests.
 app.use("/proxy", express.raw({
@@ -1740,23 +1740,54 @@ app.get("/api/check", async (req, res) => {
     if (!target) {
         return res.status(400).json({
             allowed: false,
+            cataloged: false,
+            reason: "missing_url",
             error: "Missing url"
         });
     }
+
+    let normalizedTarget = "";
+
+    try {
+        normalizedTarget =
+            new URL(
+                sanitizeTypedUrl(target) || target
+            ).href;
+    } catch {}
+
+    const cataloged =
+        Boolean(normalizedTarget) &&
+        SITE_CATALOG.some(item => {
+            try {
+                return new URL(item).href === normalizedTarget;
+            } catch {
+                return false;
+            }
+        });
 
     try {
         const url = await validateUrl(target);
 
         res.json({
             allowed: true,
+            cataloged,
+            reason: "allowed",
             url: url.href,
             hostname: url.hostname,
             corrected: Boolean(url.schoolioCorrected)
         });
     } catch (error) {
+        const message =
+            String(error && error.message || "");
+
         res.status(403).json({
             allowed: false,
-            error: error.message
+            cataloged,
+            reason:
+                /allowlist/i.test(message)
+                    ? "not_proxy_approved"
+                    : "validation_error",
+            error: message
         });
     }
 });
@@ -1807,6 +1838,26 @@ app.all("/proxy", async (req, res) => {
         }
 
         const response = await fetch(targetUrl.href, options);
+
+        if (response.status === 404) {
+            return res
+                .status(404)
+                .type("html")
+                .send(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Remote Site Returned 404</title>
+</head>
+<body style="font-family:Arial;background:#070707;color:#ddd;padding:40px">
+<h2 style="color:#ff4458">Remote site returned 404</h2>
+<p>The URL was found and sent through Schoolio Proxy, but the destination itself says this page does not exist.</p>
+<p><strong>Target:</strong></p>
+<code style="word-break:break-all">${escapeHtml(targetUrl.href)}</code>
+<p style="margin-top:20px;color:#888">This is different from a Schoolio catalog or allowlist error.</p>
+</body>
+</html>`);
+        }
 
         // Keep redirects inside the proxy and revalidate the next destination.
         if (
