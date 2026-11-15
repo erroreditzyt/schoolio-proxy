@@ -9,7 +9,7 @@ const cheerio = require("cheerio");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
-const VERSION = "Schoolio Proxy 5.4";
+const VERSION = "Schoolio Proxy 5.7";
 
 // Raw request bodies are preserved for proxied POST/PUT/PATCH requests.
 app.use("/proxy", express.raw({
@@ -214,29 +214,149 @@ const ALLOWED_HOSTS = Array.from(
 ).sort();
 
 let SITE_CATALOG = [];
+let SITE_CATALOG_ALIASES = new Map();
+let SITE_CATALOG_SOURCE = "";
+let SITE_CATALOG_ERROR = "";
+
+function addCatalogAlias(alias, url) {
+    const cleanAlias = String(alias || "").trim();
+    const cleanUrl = String(url || "").trim();
+
+    if (!cleanAlias || !cleanUrl) {
+        return;
+    }
+
+    if (!SITE_CATALOG_ALIASES.has(cleanUrl)) {
+        SITE_CATALOG_ALIASES.set(cleanUrl, new Set());
+    }
+
+    SITE_CATALOG_ALIASES
+        .get(cleanUrl)
+        .add(cleanAlias);
+}
+
+function ingestCatalogValue(value) {
+    if (typeof value === "string") {
+        const url = value.trim();
+        return url ? url : null;
+    }
+
+    if (value && typeof value === "object") {
+        const url =
+            String(
+                value.url ||
+                value.href ||
+                value.link ||
+                ""
+            ).trim();
+
+        if (!url) {
+            return null;
+        }
+
+        if (value.name) {
+            addCatalogAlias(value.name, url);
+        }
+
+        if (Array.isArray(value.aliases)) {
+            for (const alias of value.aliases) {
+                addCatalogAlias(alias, url);
+            }
+        }
+
+        return url;
+    }
+
+    return null;
+}
 
 try {
-    const candidates = [
-        path.join(__dirname, "SCHOOLIO_URL_CATALOG_UPDATED.json"),
-        path.join(__dirname, "SCHOOLIO_URL_CATALOG.json")
+    const preferred = [
+        "SCHOOLIO_URL_CATALOG_UPDATED.json",
+        "SCHOOLIO_URL_CATALOG.json"
     ];
 
-    const catalogPath = candidates.find(file => fs.existsSync(file));
+    const discovered = fs
+        .readdirSync(__dirname)
+        .filter(name => (
+            /^SCHOOLIO_URL_CATALOG.*\.json$/i.test(name)
+        ))
+        .sort((a, b) => (
+            preferred.indexOf(a) - preferred.indexOf(b)
+        ));
 
-    if (catalogPath) {
-        const parsed = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
-        if (Array.isArray(parsed)) {
-            SITE_CATALOG = Array.from(
-                new Set(
-                    parsed
-                        .map(value => String(value || "").trim())
-                        .filter(Boolean)
-                )
+    const ordered = Array.from(
+        new Set([
+            ...preferred.filter(name => (
+                fs.existsSync(path.join(__dirname, name))
+            )),
+            ...discovered
+        ])
+    );
+
+    const catalogName = ordered[0];
+
+    if (catalogName) {
+        const catalogPath =
+            path.join(__dirname, catalogName);
+
+        const parsed =
+            JSON.parse(
+                fs.readFileSync(catalogPath, "utf8")
             );
+
+        let rawItems = [];
+
+        if (Array.isArray(parsed)) {
+            rawItems = parsed;
         }
+        else if (parsed && typeof parsed === "object") {
+            rawItems =
+                parsed.urls ||
+                parsed.items ||
+                parsed.entries ||
+                parsed.catalog ||
+                [];
+
+            if (
+                parsed.aliases &&
+                typeof parsed.aliases === "object"
+            ) {
+                for (
+                    const [alias, target] of
+                    Object.entries(parsed.aliases)
+                ) {
+                    const targets =
+                        Array.isArray(target)
+                            ? target
+                            : [target];
+
+                    for (const url of targets) {
+                        addCatalogAlias(alias, url);
+                    }
+                }
+            }
+        }
+
+        SITE_CATALOG = Array.from(
+            new Set(
+                rawItems
+                    .map(ingestCatalogValue)
+                    .filter(Boolean)
+            )
+        );
+
+        SITE_CATALOG_SOURCE = catalogName;
     }
-} catch (error) {
-    console.warn("Could not load Schoolio URL catalog:", error.message);
+}
+catch (error) {
+    SITE_CATALOG_ERROR =
+        String(error && error.message || error);
+
+    console.warn(
+        "Could not load Schoolio URL catalog:",
+        SITE_CATALOG_ERROR
+    );
 }
 
 function normalizeHost(hostname) {
@@ -244,6 +364,143 @@ function normalizeHost(hostname) {
         .trim()
         .toLowerCase()
         .replace(/\.$/, "");
+}
+
+function editDistance(a, b) {
+    const left = String(a || "");
+    const right = String(b || "");
+    const rows = right.length + 1;
+    const cols = left.length + 1;
+    const matrix = Array.from(
+        { length: rows },
+        () => Array(cols).fill(0)
+    );
+
+    for (let i = 0; i < rows; i++) matrix[i][0] = i;
+    for (let j = 0; j < cols; j++) matrix[0][j] = j;
+
+    for (let i = 1; i < rows; i++) {
+        for (let j = 1; j < cols; j++) {
+            const cost =
+                right[i - 1] === left[j - 1] ? 0 : 1;
+
+            matrix[i][j] = Math.min(
+                matrix[i - 1][j] + 1,
+                matrix[i][j - 1] + 1,
+                matrix[i - 1][j - 1] + cost
+            );
+        }
+    }
+
+    return matrix[rows - 1][cols - 1];
+}
+
+function sanitizeTypedUrl(value) {
+    let raw = String(value || "").trim();
+
+    if (!raw) {
+        return "";
+    }
+
+    raw = raw
+        .replace(/^[`"'\s]+|[`"'\s]+$/g, "")
+        .replace(/\\/g, "/")
+        .replace(/^https?\s*:\s*\/+\s*/i, "https://")
+        .replace(/^https?\s*\/+\s*/i, "https://")
+        .replace(/^www\s*\.\s*/i, "www.")
+        .replace(/\s*\.\s*/g, ".")
+        .replace(/\s*\/\s*/g, "/");
+
+    if (
+        /^[a-z]+:\/\//i.test(raw) &&
+        !/^https?:\/\//i.test(raw)
+    ) {
+        return "";
+    }
+
+    if (!/^https?:\/\//i.test(raw)) {
+        raw = "https://" + raw;
+    }
+
+    return raw;
+}
+
+function findAllowedHostCorrection(hostname) {
+    const original = normalizeHost(hostname);
+    const bare = original.replace(/^www\./, "");
+
+    if (isAllowedHost(original)) {
+        return original;
+    }
+
+    if (!bare.includes(".")) {
+        const exactLabelMatches =
+            ALLOWED_HOSTS.filter(domain => (
+                domain.split(".")[0] === bare
+            ));
+
+        if (exactLabelMatches.length === 1) {
+            return exactLabelMatches[0];
+        }
+    }
+
+    let best = null;
+    let bestDistance = Infinity;
+
+    for (const allowed of ALLOWED_HOSTS) {
+        const candidate = normalizeHost(allowed);
+        const distance = editDistance(bare, candidate);
+        const limit = candidate.length >= 10 ? 2 : 1;
+
+        if (
+            distance <= limit &&
+            distance < bestDistance
+        ) {
+            best = candidate;
+            bestDistance = distance;
+        }
+    }
+
+    if (!best) {
+        return null;
+    }
+
+    return original.startsWith("www.")
+        ? "www." + best
+        : best;
+}
+
+function autocorrectTypedUrl(value) {
+    const sanitized = sanitizeTypedUrl(value);
+
+    if (!sanitized) {
+        return null;
+    }
+
+    let url;
+
+    try {
+        url = new URL(sanitized);
+    } catch {
+        return null;
+    }
+
+    if (!["http:", "https:"].includes(url.protocol)) {
+        return null;
+    }
+
+    const correctedHost =
+        findAllowedHostCorrection(url.hostname);
+
+    if (
+        correctedHost &&
+        normalizeHost(correctedHost) !==
+        normalizeHost(url.hostname)
+    ) {
+        url.hostname = correctedHost;
+    }
+
+    return url;
 }
 
 function isAllowedHost(hostname) {
@@ -321,7 +578,9 @@ function isPrivateIP(ip) {
 }
 
 async function validateUrl(input) {
-    const url = parseHttpUrl(input);
+    const original = String(input || "");
+    const sanitized = sanitizeTypedUrl(original);
+    const url = autocorrectTypedUrl(original);
 
     if (!url) {
         throw new Error("Invalid HTTP/HTTPS URL");
@@ -346,6 +605,10 @@ async function validateUrl(input) {
             throw new Error("Private/internal network addresses are blocked");
         }
     }
+
+    url.schoolioCorrected =
+        Boolean(sanitized) &&
+        sanitized !== url.href;
 
     return url;
 }
@@ -885,6 +1148,10 @@ app.get("/api/test", (req, res) => {
         version: VERSION,
         allowedDomains: ALLOWED_HOSTS.length,
         catalogUrls: SITE_CATALOG.length,
+        catalogAliases: Array.from(SITE_CATALOG_ALIASES.values())
+            .reduce((sum, aliases) => sum + aliases.size, 0),
+        catalogSource: SITE_CATALOG_SOURCE,
+        catalogError: SITE_CATALOG_ERROR || null,
         allowedCatalogVariants: ALLOWED_CATALOG_VARIANTS.length
     });
 });
@@ -984,27 +1251,306 @@ app.get("/api/sites", (req, res) => {
     });
 });
 
+function normalizeCatalogSearch(value) {
+    return String(value || "")
+        .toLowerCase()
+        .replace(/^https?:\/\//, "")
+        .replace(/^www\./, "")
+        .replace(/[._\-/:?#=&%]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function compactCatalogSearch(value) {
+    return normalizeCatalogSearch(value)
+        .replace(/[^a-z0-9]+/g, "");
+}
+
+let SITE_CATALOG_SEARCH_INDEX = null;
+
+function getCatalogSearchIndex() {
+    if (SITE_CATALOG_SEARCH_INDEX) {
+        return SITE_CATALOG_SEARCH_INDEX;
+    }
+
+    SITE_CATALOG_SEARCH_INDEX =
+        SITE_CATALOG.map(url => {
+            let hostname = "";
+
+            try {
+                hostname = new URL(url).hostname;
+            }
+            catch {}
+
+            const bareHost =
+                hostname
+                    .toLowerCase()
+                    .replace(/^www\./, "");
+
+            const aliases =
+                Array.from(
+                    SITE_CATALOG_ALIASES.get(url) ||
+                    []
+                );
+
+            return {
+                url,
+                hostname,
+                aliases,
+                name:
+                    aliases.length
+                        ? aliases[0]
+                        : "",
+                lowerUrl:
+                    url.toLowerCase(),
+                bareHost,
+                normalizedUrl:
+                    normalizeCatalogSearch(url),
+                normalizedHost:
+                    normalizeCatalogSearch(bareHost),
+                compactUrl:
+                    compactCatalogSearch(url),
+                compactHost:
+                    compactCatalogSearch(bareHost),
+                normalizedAliases:
+                    aliases.map(alias => (
+                        normalizeCatalogSearch(alias)
+                    )),
+                compactAliases:
+                    aliases.map(alias => (
+                        compactCatalogSearch(alias)
+                    ))
+            };
+        });
+
+    return SITE_CATALOG_SEARCH_INDEX;
+}
+
+function scoreCatalogEntry(entry, rawQuery) {
+    const query =
+        String(rawQuery || "")
+            .trim()
+            .toLowerCase();
+
+    const normalizedQuery =
+        normalizeCatalogSearch(query);
+
+    const compactQuery =
+        compactCatalogSearch(query);
+
+    if (!normalizedQuery) {
+        return null;
+    }
+
+    const aliasExact =
+        entry.normalizedAliases
+            .some(alias => alias === normalizedQuery);
+
+    if (aliasExact) {
+        return 0;
+    }
+
+    const aliasPrefix =
+        entry.normalizedAliases
+            .some(alias => alias.startsWith(normalizedQuery));
+
+    if (aliasPrefix) {
+        return 2;
+    }
+
+    const aliasContains =
+        entry.normalizedAliases
+            .some(alias => alias.includes(normalizedQuery));
+
+    if (aliasContains) {
+        return 4;
+    }
+
+    if (
+        entry.lowerUrl === query ||
+        entry.bareHost === query
+    ) {
+        return 6;
+    }
+
+    if (
+        entry.lowerUrl.startsWith(query) ||
+        entry.bareHost.startsWith(query)
+    ) {
+        return 8;
+    }
+
+    if (
+        entry.lowerUrl.includes(query) ||
+        entry.bareHost.includes(query)
+    ) {
+        return 10;
+    }
+
+    if (
+        entry.normalizedHost === normalizedQuery ||
+        entry.normalizedUrl === normalizedQuery
+    ) {
+        return 12;
+    }
+
+    if (
+        entry.normalizedHost.startsWith(normalizedQuery) ||
+        entry.normalizedUrl.startsWith(normalizedQuery)
+    ) {
+        return 14;
+    }
+
+    if (
+        entry.normalizedHost.includes(normalizedQuery) ||
+        entry.normalizedUrl.includes(normalizedQuery)
+    ) {
+        return 16;
+    }
+
+    const tokens =
+        normalizedQuery
+            .split(" ")
+            .filter(Boolean);
+
+    if (
+        tokens.length > 1 &&
+        tokens.every(token => (
+            entry.normalizedUrl.includes(token) ||
+            entry.normalizedAliases
+                .some(alias => alias.includes(token))
+        ))
+    ) {
+        return 20;
+    }
+
+    if (!compactQuery) {
+        return null;
+    }
+
+    const compactTargets = [
+        ...entry.compactAliases,
+        entry.compactHost
+    ].filter(Boolean);
+
+    for (const target of compactTargets) {
+        if (target.startsWith(compactQuery)) {
+            return 22;
+        }
+
+        if (target.includes(compactQuery)) {
+            return 24;
+        }
+    }
+
+    const allowedDistance =
+        compactQuery.length >= 12
+            ? 3
+            : compactQuery.length >= 7
+                ? 2
+                : 1;
+
+    for (const target of compactTargets) {
+        if (
+            Math.abs(
+                target.length - compactQuery.length
+            ) > allowedDistance
+        ) {
+            continue;
+        }
+
+        if (
+            compactQuery.length >= 4 &&
+            target[0] !== compactQuery[0]
+        ) {
+            continue;
+        }
+
+        const distance =
+            editDistance(
+                compactQuery.slice(0, 64),
+                target.slice(0, 64)
+            );
+
+        if (distance <= allowedDistance) {
+            return 30 + distance;
+        }
+    }
+
+    return null;
+}
+
+app.get("/api/catalog-status", (req, res) => {
+    res.json({
+        loaded: SITE_CATALOG.length > 0,
+        source: SITE_CATALOG_SOURCE,
+        urls: SITE_CATALOG.length,
+        aliases:
+            Array.from(SITE_CATALOG_ALIASES.values())
+                .reduce(
+                    (sum, aliases) =>
+                        sum + aliases.size,
+                    0
+                ),
+        error:
+            SITE_CATALOG_ERROR || null
+    });
+});
+
 app.get("/api/sites/search", (req, res) => {
-    const query = String(req.query.q || "")
-        .trim()
-        .toLowerCase();
+    const query =
+        String(req.query.q || "").trim();
 
     if (!query) {
         return res.json({
             query: "",
             total: 0,
-            items: []
+            items: [],
+            matches: []
         });
     }
 
-    const items = SITE_CATALOG
-        .filter(url => url.toLowerCase().includes(query))
-        .slice(0, 200);
+    const ranked = [];
+
+    for (const entry of getCatalogSearchIndex()) {
+        const score =
+            scoreCatalogEntry(entry, query);
+
+        if (score === null) {
+            continue;
+        }
+
+        ranked.push({
+            url: entry.url,
+            hostname: entry.hostname,
+            name: entry.name,
+            aliases: entry.aliases,
+            score,
+            allowed:
+                entry.hostname
+                    ? isAllowedHost(entry.hostname)
+                    : false
+        });
+    }
+
+    ranked.sort((a, b) => (
+        a.score - b.score ||
+        Number(b.allowed) - Number(a.allowed) ||
+        a.url.length - b.url.length ||
+        a.url.localeCompare(b.url)
+    ));
+
+    const matches =
+        ranked.slice(0, 50);
 
     res.json({
         query,
-        total: items.length,
-        items
+        total: ranked.length,
+        source: SITE_CATALOG_SOURCE,
+        catalogUrls: SITE_CATALOG.length,
+        matches,
+        items:
+            matches.map(item => item.url)
     });
 });
 
@@ -1204,7 +1750,8 @@ app.get("/api/check", async (req, res) => {
         res.json({
             allowed: true,
             url: url.href,
-            hostname: url.hostname
+            hostname: url.hostname,
+            corrected: Boolean(url.schoolioCorrected)
         });
     } catch (error) {
         res.status(403).json({
