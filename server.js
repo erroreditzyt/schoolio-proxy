@@ -6,6 +6,17 @@ const fs = require("fs");
 const path = require("path");
 const cheerio = require("cheerio");
 
+let pdfParse = null;
+let mammoth = null;
+
+try {
+    pdfParse = require("pdf-parse");
+} catch {}
+
+try {
+    mammoth = require("mammoth");
+} catch {}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MAX_RESPONSE_BYTES = 15 * 1024 * 1024;
@@ -17,7 +28,7 @@ app.use("/proxy", express.raw({
     limit: MAX_RESPONSE_BYTES
 }));
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 app.use((req, res, next) => {
@@ -3386,121 +3397,604 @@ app.get("/api/sites/search", (req, res) => {
 
 /* =========================================================
 SCHOOLIO NATIVE AI - GROQ
+Text + vision + file attachments.
 The private Groq API key stays on Render.
 ========================================================= */
-const GROQ_API_KEY = String(process.env.GROQ_API_KEY || "").trim();
-const AI_MODEL = String(
-    process.env.AI_MODEL || "openai/gpt-oss-20b"
+const GROQ_API_KEY = String(
+    process.env.GROQ_API_KEY || ""
 ).trim();
+
+const AI_MODEL = String(
+    process.env.AI_MODEL ||
+    "openai/gpt-oss-20b"
+).trim();
+
+const AI_VISION_MODEL = String(
+    process.env.AI_VISION_MODEL ||
+    "qwen/qwen3.8-27b"
+).trim();
+
+const AI_MAX_MESSAGES = 14;
+const AI_MAX_TOTAL_TEXT = 70000;
+const AI_MAX_ATTACHMENT_BYTES =
+    5 * 1024 * 1024;
+const AI_MAX_IMAGES = 3;
+const AI_MAX_ATTACHMENTS_PER_MESSAGE = 6;
 
 const AI_SYSTEM_PROMPTS = {
     assistant:
-        "You are Schoolio Assistant. Be helpful, clear, concise, and good at explaining schoolwork, coding, research, and everyday questions. Do not claim to have done things you did not do.",
+        "You are Schoolio AI. Talk like a normal helpful person. Be clear, friendly, direct, and conversational. Explain things well when needed, but do not sound robotic or overly formal. Do not announce that you are an AI unless it matters. Avoid excessive headings, bullet spam, emojis, decorative Unicode, fake quotes, or strange formatting. Use simple Markdown only when it genuinely improves readability, and use fenced code blocks for code. Never reveal private chain-of-thought; give concise reasoning summaries instead. If the user attaches an image or file, actually use it in your answer.",
     normal:
-        "You are a general-purpose AI assistant. Answer directly and naturally. Be accurate, useful, and concise unless the user asks for detail."
+        "You are Schoolio AI. Answer naturally, directly, and conversationally. Keep responses clean and easy to read. Avoid excessive Markdown, headings, emojis, decorative symbols, and robotic phrasing. Use code blocks when code is needed. Never reveal private chain-of-thought; provide concise reasoning summaries instead. If the user attaches an image or file, actually use it in your answer."
 };
+
+function safeAIFileName(value) {
+    return String(value || "attachment")
+        .replace(/[\r\n\t]/g, " ")
+        .replace(/[<>]/g, "")
+        .slice(0, 180);
+}
+
+function decodeAIDataUrl(dataUrl) {
+    const value =
+        String(dataUrl || "");
+
+    const match =
+        value.match(
+            /^data:([^;,]+)?;base64,([A-Za-z0-9+/=\s]+)$/i
+        );
+
+    if (!match) {
+        throw new Error(
+            "Invalid attachment encoding."
+        );
+    }
+
+    const mime =
+        String(
+            match[1] ||
+            "application/octet-stream"
+        ).toLowerCase();
+
+    const base64 =
+        match[2].replace(/\s+/g, "");
+
+    const buffer =
+        Buffer.from(base64, "base64");
+
+    if (
+        !buffer.length ||
+        buffer.length >
+            AI_MAX_ATTACHMENT_BYTES
+    ) {
+        throw new Error(
+            "Attachment is empty or too large. Keep each attachment under 5 MB."
+        );
+    }
+
+    return {
+        mime,
+        buffer
+    };
+}
+
+function cleanAIAnswer(value) {
+    return String(value || "")
+        .replace(
+            /<think>[\s\S]*?<\/think>/gi,
+            ""
+        )
+        .replace(
+            /^\s*(?:assistant|final answer)\s*:\s*/i,
+            ""
+        )
+        .trim();
+}
+
+async function processAIAttachment(
+    attachment,
+    counters
+) {
+    const item =
+        attachment &&
+        typeof attachment === "object"
+            ? attachment
+            : {};
+
+    const kind =
+        String(item.kind || "")
+            .toLowerCase();
+
+    const name =
+        safeAIFileName(item.name);
+
+    const type =
+        String(item.type || "")
+            .toLowerCase();
+
+    if (kind === "image") {
+        if (
+            !/^image\/(?:png|jpeg|webp)$/.test(type)
+        ) {
+            throw new Error(
+                `${name}: only PNG, JPG/JPEG, and WebP images are supported.`
+            );
+        }
+
+        if (
+            counters.images >=
+            AI_MAX_IMAGES
+        ) {
+            throw new Error(
+                `A maximum of ${AI_MAX_IMAGES} images can be sent in one AI request.`
+            );
+        }
+
+        const decoded =
+            decodeAIDataUrl(item.data);
+
+        if (
+            decoded.mime !== type
+        ) {
+            throw new Error(
+                `${name}: image type does not match its data.`
+            );
+        }
+
+        counters.images += 1;
+
+        return {
+            kind: "image",
+            name,
+            imagePart: {
+                type: "image_url",
+                image_url: {
+                    url:
+                        String(item.data)
+                }
+            },
+            normalized: {
+                kind: "image",
+                name,
+                type,
+                data:
+                    String(item.data)
+            }
+        };
+    }
+
+    if (kind === "text") {
+        const text =
+            String(item.text || "")
+                .slice(0, 30000);
+
+        if (!text.trim()) {
+            throw new Error(
+                `${name}: the file did not contain readable text.`
+            );
+        }
+
+        return {
+            kind: "text",
+            name,
+            text,
+            normalized: {
+                kind: "text",
+                name,
+                type:
+                    type ||
+                    "text/plain",
+                text
+            }
+        };
+    }
+
+    if (kind === "document") {
+        const decoded =
+            decodeAIDataUrl(item.data);
+
+        const ext =
+            path.extname(name)
+                .toLowerCase();
+
+        let extracted = "";
+
+        if (
+            type === "application/pdf" ||
+            ext === ".pdf"
+        ) {
+            if (!pdfParse) {
+                throw new Error(
+                    `${name}: PDF support is not installed on the server. Deploy the included package.json and run npm install.`
+                );
+            }
+
+            const parsed =
+                await pdfParse(
+                    decoded.buffer
+                );
+
+            extracted =
+                String(
+                    parsed &&
+                    parsed.text ||
+                    ""
+                );
+        }
+        else if (
+            type ===
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+            ext === ".docx"
+        ) {
+            if (!mammoth) {
+                throw new Error(
+                    `${name}: DOCX support is not installed on the server. Deploy the included package.json and run npm install.`
+                );
+            }
+
+            const result =
+                await mammoth
+                    .extractRawText({
+                        buffer:
+                            decoded.buffer
+                    });
+
+            extracted =
+                String(
+                    result &&
+                    result.value ||
+                    ""
+                );
+        }
+        else {
+            extracted =
+                decoded.buffer
+                    .toString("utf8");
+        }
+
+        extracted =
+            extracted
+                .replace(/\u0000/g, "")
+                .slice(0, 40000);
+
+        if (!extracted.trim()) {
+            throw new Error(
+                `${name}: no readable text could be extracted from this document.`
+            );
+        }
+
+        return {
+            kind: "text",
+            name,
+            text: extracted,
+            normalized: {
+                kind: "text",
+                name,
+                type:
+                    "text/plain",
+                text: extracted
+            }
+        };
+    }
+
+    throw new Error(
+        `${name}: unsupported attachment type.`
+    );
+}
+
+async function buildAIMessages(
+    incoming
+) {
+    const counters = {
+        images: 0,
+        textChars: 0
+    };
+
+    const output = [];
+    const normalizedLatest = [];
+
+    const source =
+        incoming.slice(
+            -AI_MAX_MESSAGES
+        );
+
+    for (
+        let index = 0;
+        index < source.length;
+        index += 1
+    ) {
+        const item =
+            source[index] &&
+            typeof source[index] === "object"
+                ? source[index]
+                : {};
+
+        const role =
+            item.role === "assistant"
+                ? "assistant"
+                : "user";
+
+        let text =
+            String(
+                item.content || ""
+            ).slice(0, 8000);
+
+        const imageParts = [];
+
+        if (role === "user") {
+            const attachments =
+                Array.isArray(
+                    item.attachments
+                )
+                    ? item.attachments.slice(
+                        0,
+                        AI_MAX_ATTACHMENTS_PER_MESSAGE
+                    )
+                    : [];
+
+            for (
+                let attachmentIndex = 0;
+                attachmentIndex <
+                    attachments.length;
+                attachmentIndex += 1
+            ) {
+                const processed =
+                    await processAIAttachment(
+                        attachments[
+                            attachmentIndex
+                        ],
+                        counters
+                    );
+
+                if (
+                    processed.kind ===
+                    "image"
+                ) {
+                    imageParts.push(
+                        processed.imagePart
+                    );
+                }
+                else {
+                    text +=
+                        `\n\n--- Attached file: ${processed.name} ---\n` +
+                        processed.text +
+                        `\n--- End attached file ---`;
+                }
+
+                if (
+                    index ===
+                    source.length - 1
+                ) {
+                    normalizedLatest.push(
+                        processed.normalized
+                    );
+                }
+            }
+        }
+
+        text =
+            text.trim();
+
+        if (
+            !text &&
+            imageParts.length
+        ) {
+            text =
+                "Please analyze the attached image.";
+        }
+
+        if (!text) {
+            continue;
+        }
+
+        counters.textChars +=
+            text.length;
+
+        if (
+            counters.textChars >
+            AI_MAX_TOTAL_TEXT
+        ) {
+            throw new Error(
+                "The conversation and attached files are too large. Clear the chat or attach a smaller file."
+            );
+        }
+
+        if (
+            role === "user" &&
+            imageParts.length
+        ) {
+            output.push({
+                role,
+                content: [
+                    {
+                        type: "text",
+                        text
+                    },
+                    ...imageParts
+                ]
+            });
+        }
+        else {
+            output.push({
+                role,
+                content: text
+            });
+        }
+    }
+
+    return {
+        messages: output,
+        hasImages:
+            counters.images > 0,
+        normalizedLatest
+    };
+}
 
 app.get("/api/ai/status", (req, res) => {
     res.json({
-        configured: Boolean(GROQ_API_KEY),
-        model: AI_MODEL,
-        provider: "Groq",
-        endpoint: "/api/ai"
+        configured:
+            Boolean(
+                GROQ_API_KEY
+            ),
+        model:
+            AI_MODEL,
+        visionModel:
+            AI_VISION_MODEL,
+        provider:
+            "Groq",
+        endpoint:
+            "/api/ai",
+        attachments: {
+            images: true,
+            text: true,
+            pdf:
+                Boolean(pdfParse),
+            docx:
+                Boolean(mammoth),
+            maxImages:
+                AI_MAX_IMAGES,
+            maxAttachmentBytes:
+                AI_MAX_ATTACHMENT_BYTES
+        }
     });
 });
 
 app.post("/api/ai", async (req, res) => {
     if (!GROQ_API_KEY) {
-        return res.status(503).json({
-            error: "AI is not configured on Render.",
-            setup: "Add GROQ_API_KEY in Render Environment, then redeploy.",
-            model: AI_MODEL
-        });
+        return res
+            .status(503)
+            .json({
+                error:
+                    "AI is not configured on Render.",
+                setup:
+                    "Add GROQ_API_KEY in Render Environment, then redeploy.",
+                model:
+                    AI_MODEL
+            });
     }
 
     const mode =
-        req.body && req.body.mode === "normal"
+        req.body &&
+        req.body.mode === "normal"
             ? "normal"
             : "assistant";
 
     const incoming =
-        Array.isArray(req.body && req.body.messages)
+        Array.isArray(
+            req.body &&
+            req.body.messages
+        )
             ? req.body.messages
             : [];
 
-    const messages = incoming
-        .slice(-20)
-        .map(item => ({
-            role:
-                item && item.role === "assistant"
-                    ? "assistant"
-                    : "user",
-            content:
-                String(item && item.content || "")
-                    .slice(0, 6000)
-        }))
-        .filter(item => item.content.trim());
-
-    if (!messages.length) {
-        return res.status(400).json({
-            error: "No message was provided."
-        });
+    if (!incoming.length) {
+        return res
+            .status(400)
+            .json({
+                error:
+                    "No message was provided."
+            });
     }
 
-    const totalChars = messages.reduce(
-        (sum, item) => sum + item.content.length,
-        0
-    );
-
-    if (totalChars > 24000) {
-        return res.status(413).json({
-            error:
-                "Conversation is too long. Clear the chat and try again."
-        });
-    }
-
-    const controller = new AbortController();
-    const timeout =
-        setTimeout(() => controller.abort(), 60000);
+    let built;
 
     try {
-        const response = await fetch(
-            "https://api.groq.com/openai/v1/chat/completions",
-            {
-                method: "POST",
-                headers: {
-                    "Authorization":
-                        "Bearer " + GROQ_API_KEY,
-                    "Content-Type":
-                        "application/json"
-                },
-                body: JSON.stringify({
-                    model: AI_MODEL,
-                    messages: [
-                        {
-                            role: "system",
-                            content:
-                                AI_SYSTEM_PROMPTS[mode]
-                        },
-                        ...messages
-                    ],
-                    max_tokens: 700,
-                    temperature:
-                        mode === "assistant"
-                            ? 0.55
-                            : 0.75,
-                    stream: false
-                }),
-                signal: controller.signal
-            }
+        built =
+            await buildAIMessages(
+                incoming
+            );
+    }
+    catch (error) {
+        return res
+            .status(400)
+            .json({
+                error:
+                    String(
+                        error &&
+                        error.message ||
+                        error ||
+                        "Could not process the attachment."
+                    )
+            });
+    }
+
+    if (!built.messages.length) {
+        return res
+            .status(400)
+            .json({
+                error:
+                    "No readable message or attachment was provided."
+            });
+    }
+
+    const selectedModel =
+        built.hasImages
+            ? AI_VISION_MODEL
+            : AI_MODEL;
+
+    const controller =
+        new AbortController();
+
+    const timeout =
+        setTimeout(
+            () =>
+                controller.abort(),
+            90000
         );
 
-        const raw = await response.text();
+    try {
+        const response =
+            await fetch(
+                "https://api.groq.com/openai/v1/chat/completions",
+                {
+                    method: "POST",
+                    headers: {
+                        "Authorization":
+                            "Bearer " +
+                            GROQ_API_KEY,
+                        "Content-Type":
+                            "application/json"
+                    },
+                    body:
+                        JSON.stringify({
+                            model:
+                                selectedModel,
+                            messages: [
+                                {
+                                    role:
+                                        "system",
+                                    content:
+                                        AI_SYSTEM_PROMPTS[
+                                            mode
+                                        ]
+                                },
+                                ...built.messages
+                            ],
+                            max_completion_tokens:
+                                1400,
+                            temperature:
+                                mode ===
+                                "assistant"
+                                    ? 0.55
+                                    : 0.7,
+                            stream:
+                                false
+                        }),
+                    signal:
+                        controller.signal
+                }
+            );
+
+        const raw =
+            await response.text();
+
         let data = null;
 
         try {
-            data = JSON.parse(raw);
-        } catch {}
+            data =
+                JSON.parse(raw);
+        }
+        catch {}
 
         if (!response.ok) {
             const providerMessage =
@@ -3512,13 +4006,17 @@ app.post("/api/ai", async (req, res) => {
                 );
 
             return res
-                .status(response.status)
+                .status(
+                    response.status
+                )
                 .json({
                     error:
-                        typeof providerMessage === "string"
+                        typeof providerMessage ===
+                        "string"
                             ? providerMessage
                             : "Groq returned an error.",
-                    model: AI_MODEL
+                    model:
+                        selectedModel
                 });
         }
 
@@ -3527,39 +4025,64 @@ app.post("/api/ai", async (req, res) => {
             data.choices &&
             data.choices[0] &&
             data.choices[0].message &&
-            data.choices[0].message.content;
+            data.choices[0]
+                .message.content;
 
         const answer =
-            String(content || "").trim();
+            cleanAIAnswer(
+                content
+            );
 
         if (!answer) {
-            return res.status(502).json({
-                error:
-                    "The model returned an empty response.",
-                model: AI_MODEL
-            });
+            return res
+                .status(502)
+                .json({
+                    error:
+                        "The model returned an empty response.",
+                    model:
+                        selectedModel
+                });
         }
 
         res.json({
             answer,
-            model: AI_MODEL,
+            model:
+                selectedModel,
+            textModel:
+                AI_MODEL,
+            visionModel:
+                AI_VISION_MODEL,
+            usedVision:
+                built.hasImages,
+            normalizedAttachments:
+                built.normalizedLatest,
             mode,
-            provider: "Groq"
+            provider:
+                "Groq"
         });
-    } catch (error) {
+    }
+    catch (error) {
         res.status(
-            error && error.name === "AbortError"
+            error &&
+            error.name ===
+                "AbortError"
                 ? 504
                 : 502
         ).json({
             error:
-                error && error.name === "AbortError"
+                error &&
+                error.name ===
+                    "AbortError"
                     ? "The AI request timed out."
                     : "Could not reach Groq.",
-            model: AI_MODEL
+            model:
+                selectedModel
         });
-    } finally {
-        clearTimeout(timeout);
+    }
+    finally {
+        clearTimeout(
+            timeout
+        );
     }
 });
 
